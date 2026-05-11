@@ -1,8 +1,12 @@
+import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import bcrypt from 'bcryptjs';
 import express from 'express';
+import helmet from 'helmet';
 import jwt from 'jsonwebtoken';
+import multer from 'multer';
+import rateLimit from 'express-rate-limit';
 import {
   createProtocol,
   db,
@@ -19,7 +23,11 @@ import {
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const rootDir = path.resolve(__dirname, '..');
-const JWT_SECRET = process.env.JWT_SECRET || 'dev-secret-nova-iguacu-castracao';
+const uploadsDir = path.join(rootDir, 'data', 'uploads');
+fs.mkdirSync(uploadsDir, { recursive: true });
+const isDev = process.env.NODE_ENV !== 'production';
+const JWT_SECRET = process.env.JWT_SECRET || (isDev ? 'dev-secret-nova-iguacu-castracao' : null);
+if (!JWT_SECRET) throw new Error('JWT_SECRET env var obrigatório em produção.');
 const PORT = Number(process.env.PORT || 4000);
 const ROLE_LIMITS = {
   admin: 99,
@@ -28,8 +36,33 @@ const ROLE_LIMITS = {
   clinica: 0
 };
 
+const docUpload = multer({
+  storage: multer.diskStorage({
+    destination(req, _file, cb) {
+      const dir = path.join(uploadsDir, String(req.user.id));
+      fs.mkdirSync(dir, { recursive: true });
+      cb(null, dir);
+    },
+    filename(_req, file, cb) {
+      cb(null, `${file.fieldname}${path.extname(file.originalname).toLowerCase()}`);
+    }
+  }),
+  limits: { fileSize: 10 * 1024 * 1024 },
+  fileFilter(_req, file, cb) {
+    const allowed = ['.pdf', '.jpg', '.jpeg', '.png', '.webp'];
+    if (allowed.includes(path.extname(file.originalname).toLowerCase())) cb(null, true);
+    else cb(new Error('Tipo não permitido. Use PDF, JPG ou PNG.'));
+  }
+});
+
 const app = express();
+app.use(helmet({ crossOriginResourcePolicy: { policy: 'same-origin' } }));
 app.use(express.json({ limit: '2mb' }));
+
+const authLimiter = rateLimit({ windowMs: 60_000, max: 15, standardHeaders: true, legacyHeaders: false });
+app.use('/api/auth/login', authLimiter);
+app.use('/api/auth/register', authLimiter);
+app.use('/api/public/inscricao', rateLimit({ windowMs: 60_000, max: 5, standardHeaders: true, legacyHeaders: false }));
 
 await bootstrap();
 
@@ -97,6 +130,55 @@ app.get('/api/me', requireAuth, (req, res) => {
     currentMonthUsed: getMonthlyUsage(user.id, new Date().toISOString().slice(0, 10)),
     appointments: listAppointments({ userId: user.id })
   });
+});
+
+app.post('/api/me/documents', requireAuth, (req, res, next) => {
+  if (!['tutor', 'protetor'].includes(req.user.role)) {
+    return res.status(403).json({ message: 'Apenas tutores e protetores podem enviar documentos.' });
+  }
+  docUpload.fields([
+    { name: 'doc_residencia', maxCount: 1 },
+    { name: 'doc_cpf', maxCount: 1 },
+    { name: 'doc_identidade', maxCount: 1 }
+  ])(req, res, (err) => {
+    if (err) return res.status(400).json({ message: err.message || 'Erro ao processar arquivo.' });
+    next();
+  });
+}, (req, res) => {
+  try {
+    const files = req.files || {};
+    const updates = [];
+    const values = [];
+    ['doc_residencia', 'doc_cpf', 'doc_identidade'].forEach((field) => {
+      if (files[field]?.[0]) {
+        updates.push(`${field} = ?`);
+        values.push(files[field][0].filename);
+      }
+    });
+    if (!updates.length) return res.status(400).json({ message: 'Nenhum arquivo enviado.' });
+    values.push(req.user.id);
+    db.prepare(`UPDATE users SET ${updates.join(', ')}, updated_at = CURRENT_TIMESTAMP WHERE id = ?`).run(...values);
+    res.json({ user: publicUser(getUserById(req.user.id)) });
+  } catch (error) {
+    sendError(res, error);
+  }
+});
+
+app.get('/api/documents/:userId/:type', requireAppointmentManager, (req, res) => {
+  try {
+    const allowed = ['doc_residencia', 'doc_cpf', 'doc_identidade'];
+    if (!allowed.includes(req.params.type)) throw httpError(400, 'Tipo de documento inválido.');
+    const user = getUserById(req.params.userId);
+    if (!user) throw httpError(404, 'Usuário não encontrado.');
+    const filename = user[req.params.type];
+    if (!filename) throw httpError(404, 'Documento não enviado pelo tutor.');
+    const filePath = path.join(uploadsDir, String(user.id), filename);
+    if (!fs.existsSync(filePath)) throw httpError(404, 'Arquivo não encontrado no servidor.');
+    res.setHeader('Content-Disposition', `attachment; filename="${encodeURIComponent(filename)}"`);
+    res.sendFile(filePath);
+  } catch (error) {
+    sendError(res, error);
+  }
 });
 
 app.post('/api/appointments/auto', requireAuth, (req, res) => {
@@ -340,8 +422,9 @@ app.get(/.*/, (_req, res) => {
   });
 });
 
-app.listen(PORT, () => {
-  console.log(`API em http://127.0.0.1:${PORT}`);
+const LISTEN_HOST = process.env.LISTEN_HOST || '0.0.0.0';
+app.listen(PORT, LISTEN_HOST, () => {
+  console.log(`API em http://${LISTEN_HOST}:${PORT}`);
 });
 
 async function bootstrap() {
@@ -367,7 +450,7 @@ function registerOrActivateUser(input = {}, role, options = {}) {
     if (!ok) throw httpError(401, 'Este CPF já possui senha. Entre com a senha correta ou use a área de login.');
   }
 
-  const hash = input.password ? bcrypt.hashSync(String(input.password), 10) : existing?.password_hash;
+  const hash = input.password ? bcrypt.hashSync(String(input.password), 12) : existing?.password_hash;
   if (!hash) throw httpError(400, 'Informe uma senha para acompanhar seus agendamentos.');
 
   if (existing) {
@@ -544,9 +627,13 @@ function getMonthlyUsage(userId, dateString) {
   `).get(userId, start, end).total;
 }
 
-function listAppointments({ userId, clinicId }) {
+function listAppointments({ userId, clinicId, appointmentId } = {}) {
   const params = [];
   const conditions = [];
+  if (appointmentId) {
+    conditions.push('a.id = ?');
+    params.push(appointmentId);
+  }
   if (userId) {
     conditions.push('a.user_id = ?');
     params.push(userId);
@@ -568,6 +655,9 @@ function listAppointments({ userId, clinicId }) {
       u.cpf AS user_cpf,
       u.phone AS user_phone,
       u.role AS user_role,
+      u.doc_residencia,
+      u.doc_cpf,
+      u.doc_identidade,
       an.name AS animal_name,
       an.species,
       an.sex,
@@ -591,7 +681,7 @@ function listAppointments({ userId, clinicId }) {
 }
 
 function getAppointmentDetails(id) {
-  const appointment = listAppointments({}).find((item) => Number(item.id) === Number(id));
+  const [appointment] = listAppointments({ appointmentId: id });
   if (!appointment) throw httpError(404, 'Agendamento não encontrado.');
   return appointment;
 }
@@ -674,7 +764,7 @@ function upsertAdminUser(input = {}) {
   if (!data.name) throw httpError(400, 'Informe o nome.');
   if (data.cpf.length !== 11) throw httpError(400, 'CPF deve ter 11 dígitos.');
   if (role === 'clinica' && !clinic) throw httpError(400, 'Selecione uma clínica cadastrada para este usuário.');
-  const passwordHash = input.password ? bcrypt.hashSync(String(input.password), 10) : null;
+  const passwordHash = input.password ? bcrypt.hashSync(String(input.password), 12) : null;
   if (!id && role === 'clinica' && !passwordHash) throw httpError(400, 'Informe uma senha para o usuário da clínica.');
 
   if (id) {

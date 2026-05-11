@@ -111,6 +111,9 @@ export function initSchema() {
   migrateUsersForClinicRole();
   ensureColumn('slots', 'clinic_id', 'INTEGER REFERENCES clinics(id)');
   ensureColumn('users', 'clinic_id', 'INTEGER REFERENCES clinics(id)');
+  ensureColumn('users', 'doc_residencia', 'TEXT');
+  ensureColumn('users', 'doc_cpf', 'TEXT');
+  ensureColumn('users', 'doc_identidade', 'TEXT');
 }
 
 export async function seedDatabase() {
@@ -169,9 +172,13 @@ function migrateUsersForClinicRole() {
 }
 
 function seedAdmin() {
+  const isProd = process.env.NODE_ENV === 'production';
   const adminCpf = normalizeCpf(process.env.ADMIN_CPF || '00000000000');
   const password = process.env.ADMIN_PASSWORD || 'admin123';
-  const hash = bcrypt.hashSync(password, 10);
+  if (isProd && (!process.env.ADMIN_CPF || !process.env.ADMIN_PASSWORD)) {
+    console.warn('[SEGURANÇA] ADMIN_CPF e/ou ADMIN_PASSWORD não definidos. Use credenciais padrão para acessar e troque imediatamente.');
+  }
+  const hash = bcrypt.hashSync(password, 12);
   db.prepare(`
     INSERT INTO users (name, cpf, password_hash, phone, address, neighborhood, role, city_confirmed, adult_confirmed, active)
     VALUES ('Administrador', ?, ?, '(21) 0000-0000', 'Prefeitura de Nova Iguacu', 'Centro', 'admin', 1, 1, 1)
