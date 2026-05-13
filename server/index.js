@@ -56,7 +56,15 @@ const docUpload = multer({
 });
 
 const app = express();
-app.use(helmet({ crossOriginResourcePolicy: { policy: 'same-origin' } }));
+app.use(helmet({
+  crossOriginResourcePolicy: { policy: 'same-origin' },
+  contentSecurityPolicy: {
+    directives: {
+      ...helmet.contentSecurityPolicy.getDefaultDirectives(),
+      upgradeInsecureRequests: null
+    }
+  }
+}));
 app.use(express.json({ limit: '2mb' }));
 
 const authLimiter = rateLimit({ windowMs: 60_000, max: 15, standardHeaders: true, legacyHeaders: false });
