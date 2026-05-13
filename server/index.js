@@ -58,11 +58,7 @@ const docUpload = multer({
 const app = express();
 app.use(helmet({
   crossOriginResourcePolicy: { policy: 'same-origin' },
-  contentSecurityPolicy: {
-    directives: {
-      upgradeInsecureRequests: null
-    }
-  }
+  contentSecurityPolicy: false
 }));
 app.use(express.json({ limit: '2mb' }));
 
