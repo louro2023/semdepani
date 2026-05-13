@@ -60,7 +60,6 @@ app.use(helmet({
   crossOriginResourcePolicy: { policy: 'same-origin' },
   contentSecurityPolicy: {
     directives: {
-      ...helmet.contentSecurityPolicy.getDefaultDirectives(),
       upgradeInsecureRequests: null
     }
   }
