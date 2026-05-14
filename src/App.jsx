@@ -896,7 +896,8 @@ function ReportsTab({ reports }) {
         {perDay.length === 0 ? <p className="muted">Nenhum dado.</p> : (
           <div className="report-table-wrap">
             <table className="report-table">
-              <thead><tr><th>Data</th><th>Agendamentos</th><th style={{width:'40%'}}>Gráfico</th></tr></thead>
+              <colgroup><col /><col style={{width:'80px'}} /><col style={{width:'45%'}} /></colgroup>
+              <thead><tr><th>Data</th><th className="report-num">Qtd.</th><th>Gráfico</th></tr></thead>
               <tbody>
                 {perDay.map((row) => (
                   <tr key={row.day}>
@@ -923,7 +924,8 @@ function ReportsTab({ reports }) {
         {perClinic.length === 0 ? <p className="muted">Nenhum dado.</p> : (
           <div className="report-table-wrap">
             <table className="report-table">
-              <thead><tr><th>Clínica</th><th>Total</th><th>Ocupadas</th><th>Disponíveis</th><th>Utilização</th></tr></thead>
+              <colgroup><col /><col style={{width:'72px'}} /><col style={{width:'88px'}} /><col style={{width:'100px'}} /><col style={{width:'160px'}} /></colgroup>
+              <thead><tr><th>Clínica</th><th className="report-num">Total</th><th className="report-num">Ocupadas</th><th className="report-num">Disponíveis</th><th>Utilização</th></tr></thead>
               <tbody>
                 {perClinic.map((row) => {
                   const pct = row.total > 0 ? Math.round((row.occupied / row.total) * 100) : 0;
@@ -933,10 +935,8 @@ function ReportsTab({ reports }) {
                       <td className="report-num">{row.total}</td>
                       <td className="report-num">{row.occupied}</td>
                       <td className="report-num">{row.available}</td>
-                      <td>
-                        <div className="report-bar">
-                          <div className="report-bar-fill utilization" style={{width: `${pct}%`}} />
-                        </div>
+                      <td className="report-col-util">
+                        <div className="report-bar"><div className="report-bar-fill utilization" style={{width: `${pct}%`}} /></div>
                         <span className="report-pct">{pct}%</span>
                       </td>
                     </tr>
@@ -1059,7 +1059,8 @@ function AdminSummary({ summary, reports }) {
             {reports.perClinic.length === 0 ? <p className="muted">Nenhum dado.</p> : (
               <div className="report-table-wrap">
                 <table className="report-table">
-                  <thead><tr><th>Clínica</th><th>Total</th><th>Ocupadas</th><th>Disponíveis</th><th>Utilização</th></tr></thead>
+                  <colgroup><col /><col style={{width:'72px'}} /><col style={{width:'88px'}} /><col style={{width:'100px'}} /><col style={{width:'160px'}} /></colgroup>
+                  <thead><tr><th>Clínica</th><th className="report-num">Total</th><th className="report-num">Ocupadas</th><th className="report-num">Disponíveis</th><th>Utilização</th></tr></thead>
                   <tbody>
                     {reports.perClinic.map((row) => {
                       const pct = row.total > 0 ? Math.round((row.occupied / row.total) * 100) : 0;
@@ -1069,11 +1070,9 @@ function AdminSummary({ summary, reports }) {
                           <td className="report-num">{row.total}</td>
                           <td className="report-num">{row.occupied}</td>
                           <td className="report-num">{row.available}</td>
-                          <td>
-                            <div style={{display:'flex',alignItems:'center',gap:6}}>
-                              <div className="report-bar" style={{flex:1}}><div className="report-bar-fill utilization" style={{width:`${pct}%`}} /></div>
-                              <span className="report-pct">{pct}%</span>
-                            </div>
+                          <td className="report-col-util">
+                            <div className="report-bar"><div className="report-bar-fill utilization" style={{width:`${pct}%`}} /></div>
+                            <span className="report-pct">{pct}%</span>
                           </td>
                         </tr>
                       );
@@ -1119,7 +1118,8 @@ function AdminSummary({ summary, reports }) {
               return (
                 <div className="report-table-wrap">
                   <table className="report-table">
-                    <thead><tr><th>Data</th><th>Agendamentos</th><th style={{width:'40%'}}>Gráfico</th></tr></thead>
+                    <colgroup><col /><col style={{width:'80px'}} /><col style={{width:'45%'}} /></colgroup>
+                    <thead><tr><th>Data</th><th className="report-num">Qtd.</th><th>Gráfico</th></tr></thead>
                     <tbody>
                       {reports.perDay.map((row) => (
                         <tr key={row.day}>

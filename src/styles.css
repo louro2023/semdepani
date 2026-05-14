@@ -1834,6 +1834,7 @@ tr:last-child td {
   width: 100%;
   border-collapse: collapse;
   font-size: 0.88rem;
+  table-layout: fixed;
 }
 
 .report-table th {
@@ -1846,6 +1847,7 @@ tr:last-child td {
   text-transform: uppercase;
   letter-spacing: 0.03em;
   border-bottom: 1px solid var(--line);
+  white-space: nowrap;
 }
 
 .report-table td {
@@ -1853,6 +1855,9 @@ tr:last-child td {
   border-bottom: 1px solid var(--line);
   color: var(--ink);
   vertical-align: middle;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .report-table tr:last-child td {
@@ -1867,6 +1872,20 @@ tr:last-child td {
   font-weight: 600;
   font-variant-numeric: tabular-nums;
   text-align: right;
+}
+
+.report-table th.report-num {
+  text-align: right;
+}
+
+.report-col-util {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.report-col-util .report-bar {
+  flex: 1;
 }
 
 .report-bar {
