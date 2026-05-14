@@ -842,6 +842,100 @@ function AdminPanel({ auth }) {
   );
 }
 
+function printReport(reports) {
+  const { totals, perDay, perClinic, castrationsByClinic, castrationsByType } = reports;
+  const date = new Date().toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit', year: 'numeric' });
+
+  const tableStyle = 'width:100%;border-collapse:collapse;font-size:13px;margin-bottom:24px;';
+  const thStyle = 'background:#e8f7f0;padding:8px 12px;text-align:left;border-bottom:2px solid #c4ddd6;font-size:11px;text-transform:uppercase;letter-spacing:.04em;color:#567069;';
+  const thNumStyle = thStyle + 'text-align:right;';
+  const tdStyle = 'padding:7px 12px;border-bottom:1px solid #e0ede8;';
+  const tdNumStyle = tdStyle + 'text-align:right;font-weight:600;font-variant-numeric:tabular-nums;';
+
+  function table(headers, rows) {
+    const ths = headers.map(([label, num]) => `<th style="${num ? thNumStyle : thStyle}">${label}</th>`).join('');
+    const trs = rows.map((cells) =>
+      '<tr>' + cells.map((c, i) => `<td style="${headers[i][1] ? tdNumStyle : tdStyle}">${c ?? ''}</td>`).join('') + '</tr>'
+    ).join('');
+    return `<table style="${tableStyle}"><thead><tr>${ths}</tr></thead><tbody>${trs}</tbody></table>`;
+  }
+
+  const maxDay = Math.max(...perDay.map((r) => r.total), 1);
+  const barCell = (val, max, color = '#0c9278') => {
+    const pct = Math.round((val / max) * 100);
+    return `<div style="height:8px;border-radius:4px;background:#e0ede8;overflow:hidden;"><div style="height:100%;width:${pct}%;background:${color};border-radius:4px;"></div></div>`;
+  };
+
+  const html = `<!DOCTYPE html><html lang="pt-BR"><head><meta charset="UTF-8">
+  <title>Relatório de Castrações — ${date}</title>
+  <style>
+    body { font-family: 'Segoe UI', Arial, sans-serif; color: #1a2e26; margin: 0; padding: 32px 40px; }
+    h1 { font-size: 22px; margin: 0 0 4px; }
+    .sub { color: #567069; font-size: 13px; margin-bottom: 32px; }
+    h2 { font-size: 14px; margin: 0 0 10px; text-transform: uppercase; letter-spacing: .05em; color: #0c9278; border-bottom: 2px solid #c4ddd6; padding-bottom: 6px; }
+    .metrics { display: flex; gap: 16px; margin-bottom: 28px; flex-wrap: wrap; }
+    .metric { flex: 1; min-width: 100px; border: 1px solid #c4ddd6; border-radius: 10px; padding: 14px 16px; text-align: center; }
+    .metric strong { display: block; font-size: 28px; line-height: 1; margin-bottom: 4px; }
+    .metric span { font-size: 11px; color: #567069; text-transform: uppercase; letter-spacing: .04em; }
+    .agendado strong { color: #0c9278; } .realizado strong { color: #18825c; }
+    .nao_realizado strong { color: #c05a21; } .cancelado strong { color: #b42318; }
+    section { margin-bottom: 32px; page-break-inside: avoid; }
+    @media print { body { padding: 16px 20px; } }
+  </style></head><body>
+  <h1>Relatório de Castrações — Nova Iguaçu</h1>
+  <p class="sub">Gerado em ${date} · Programa Municipal de Castração Animal</p>
+
+  <section>
+    <h2>Resumo geral</h2>
+    <div class="metrics">
+      <div class="metric agendado"><strong>${totals.agendado || 0}</strong><span>Agendados</span></div>
+      <div class="metric realizado"><strong>${totals.realizado || 0}</strong><span>Realizados</span></div>
+      <div class="metric nao_realizado"><strong>${totals.nao_realizado || 0}</strong><span>Não realizados</span></div>
+      <div class="metric cancelado"><strong>${totals.cancelado || 0}</strong><span>Cancelados</span></div>
+    </div>
+  </section>
+
+  <section>
+    <h2>Vagas por clínica</h2>
+    ${table([['Clínica'], ['Total', true], ['Ocupadas', true], ['Disponíveis', true], ['Utilização %', true]],
+      perClinic.map((r) => [r.clinic, r.total, r.occupied, r.available,
+        r.total > 0 ? Math.round((r.occupied / r.total) * 100) + '%' : '0%']))}
+  </section>
+
+  <section>
+    <h2>Castrações realizadas por clínica</h2>
+    ${castrationsByClinic.length === 0
+      ? '<p style="color:#567069;font-size:13px;">Nenhuma castração registrada como realizada.</p>'
+      : table([['Clínica'], ['Realizadas', true]], castrationsByClinic.map((r) => [r.clinic, r.done]))}
+  </section>
+
+  <section>
+    <h2>Castrações realizadas por tipo</h2>
+    ${castrationsByType.length === 0
+      ? '<p style="color:#567069;font-size:13px;">Nenhuma castração registrada como realizada.</p>'
+      : table([['Tipo'], ['Realizadas', true]], castrationsByType.map((r) => [r.label, r.done]))}
+  </section>
+
+  <section>
+    <h2>Agendamentos por dia (últimos 90 dias)</h2>
+    ${perDay.length === 0
+      ? '<p style="color:#567069;font-size:13px;">Nenhum agendamento.</p>'
+      : table([['Data'], ['Agendamentos', true], ['Gráfico']],
+          perDay.map((r) => [
+            new Date(r.day + 'T12:00:00').toLocaleDateString('pt-BR'),
+            r.total,
+            barCell(r.total, maxDay)
+          ]))}
+  </section>
+  </body></html>`;
+
+  const win = window.open('', '_blank', 'width=900,height=700');
+  win.document.write(html);
+  win.document.close();
+  win.focus();
+  setTimeout(() => { win.print(); }, 400);
+}
+
 function ReportsTab({ reports }) {
   if (!reports?.totals) return <Loading label="Carregando relatórios" />;
 
@@ -860,6 +954,13 @@ function ReportsTab({ reports }) {
 
   return (
     <div className="reports-layout">
+
+      <div className="report-section-header">
+        <h3 className="report-section-title"><BarChart2 size={18} /> Relatórios</h3>
+        <button className="button primary small" type="button" onClick={() => printReport(reports)}>
+          <Download size={15} /> Exportar PDF
+        </button>
+      </div>
 
       {/* Totais gerais */}
       <div className="report-section">
@@ -1029,6 +1130,13 @@ function AdminSummary({ summary, reports }) {
 
       {reports?.totals ? (
         <div className="reports-layout" style={{marginTop: '24px'}}>
+
+          <div className="report-section-header" style={{marginBottom: '4px'}}>
+            <span />
+            <button className="button primary small" type="button" onClick={() => printReport(reports)}>
+              <Download size={15} /> Exportar PDF
+            </button>
+          </div>
 
           <div className="report-section">
             <h3 className="report-section-title"><BarChart2 size={18} /> Agendamentos por status</h3>
