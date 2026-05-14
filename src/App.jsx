@@ -1,11 +1,13 @@
 ﻿import { useEffect, useMemo, useState } from 'react';
 import {
   AlertCircle,
+  BarChart2,
   Building2,
   Calendar,
   CalendarPlus,
   CheckCircle2,
   ClipboardCheck,
+  Download,
   Edit3,
   Eye,
   FileCheck,
@@ -775,17 +777,19 @@ function AdminPanel({ auth }) {
   const [appointments, setAppointments] = useState([]);
   const [users, setUsers] = useState([]);
   const [protectors, setProtectors] = useState([]);
+  const [reports, setReports] = useState(null);
   const [error, setError] = useState('');
 
   async function loadAll() {
     try {
-      const [summaryData, slotsData, clinicsData, appointmentsData, usersData, protectorsData] = await Promise.all([
+      const [summaryData, slotsData, clinicsData, appointmentsData, usersData, protectorsData, reportsData] = await Promise.all([
         request('/admin/summary', {}, auth.token),
         request('/admin/slots', {}, auth.token),
         request('/admin/clinics', {}, auth.token),
         request('/admin/appointments', {}, auth.token),
         request('/admin/users', {}, auth.token),
-        request('/admin/protectors', {}, auth.token)
+        request('/admin/protectors', {}, auth.token),
+        request('/admin/reports', {}, auth.token)
       ]);
       setSummary(summaryData);
       setSlots(slotsData.slots || []);
@@ -793,6 +797,7 @@ function AdminPanel({ auth }) {
       setAppointments(appointmentsData.appointments || []);
       setUsers(usersData.users || []);
       setProtectors(protectorsData.protectors || []);
+      setReports(reportsData);
       setError('');
     } catch (err) {
       setError(err.message);
@@ -817,7 +822,8 @@ function AdminPanel({ auth }) {
           ['slots', Calendar, 'Vagas'],
           ['appointments', ClipboardCheck, 'Agendamentos'],
           ['users', Users, 'Usuários'],
-          ['protectors', Shield, 'Protetores']
+          ['protectors', Shield, 'Protetores'],
+          ['reports', BarChart2, 'Relatórios']
         ].map(([key, Icon, label]) => (
           <button className={tab === key ? 'active' : ''} type="button" key={key} onClick={() => setTab(key)}>
             <Icon size={17} /> {label}
@@ -825,26 +831,312 @@ function AdminPanel({ auth }) {
         ))}
       </div>
 
-      {tab === 'dashboard' ? <AdminSummary summary={summary} /> : null}
+      {tab === 'dashboard' ? <AdminSummary summary={summary} reports={reports} /> : null}
       {tab === 'clinics' ? <ClinicsTab clinics={clinics} reload={loadAll} auth={auth} /> : null}
       {tab === 'slots' ? <SlotsTab slots={slots} clinics={clinics} reload={loadAll} auth={auth} /> : null}
       {tab === 'appointments' ? <AppointmentsTab appointments={appointments} reload={loadAll} auth={auth} /> : null}
       {tab === 'users' ? <UsersTab users={users} clinics={clinics} reload={loadAll} auth={auth} /> : null}
       {tab === 'protectors' ? <ProtectorsTab protectors={protectors} clinics={clinics} reload={loadAll} auth={auth} /> : null}
+      {tab === 'reports' ? <ReportsTab reports={reports} /> : null}
     </section>
   );
 }
 
-function AdminSummary({ summary }) {
-  if (!summary) return <Loading label="Carregando resumo" />;
+function ReportsTab({ reports }) {
+  if (!reports) return <Loading label="Carregando relatórios" />;
+
+  const { totals, perDay, perClinic, castrationsByClinic, castrationsByType } = reports;
+
+  function exportCsv(rows, headers, filename) {
+    const lines = [headers.join(','), ...rows.map((r) => headers.map((h) => `"${r[h] ?? ''}"`).join(','))];
+    const blob = new Blob([lines.join('\n')], { type: 'text/csv;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url; a.download = filename; a.click();
+    URL.revokeObjectURL(url);
+  }
+
+  const maxDay = Math.max(...perDay.map((r) => r.total), 1);
+
   return (
-    <div className="summary-grid">
-      <Metric icon={Calendar} label="Total de vagas" value={summary.slots.total} />
-      <Metric icon={CheckCircle2} label="Vagas preenchidas" value={summary.slots.occupied} />
-      <Metric icon={AlertCircle} label="Disponíveis" value={summary.slots.available} />
-      <Metric icon={XCircle} label="Faltas" value={summary.appointments.nao_realizado || 0} />
-      <Metric icon={Shield} label="Protetores" value={summary.users.protetor || 0} />
-      <Metric icon={UserRound} label="Tutores" value={summary.users.tutor || 0} />
+    <div className="reports-layout">
+
+      {/* Totais gerais */}
+      <div className="report-section">
+        <h3 className="report-section-title"><BarChart2 size={18} /> Resumo geral</h3>
+        <div className="report-metrics">
+          <div className="report-metric agendado">
+            <strong>{totals.agendado || 0}</strong>
+            <span>Agendados</span>
+          </div>
+          <div className="report-metric realizado">
+            <strong>{totals.realizado || 0}</strong>
+            <span>Realizados</span>
+          </div>
+          <div className="report-metric nao_realizado">
+            <strong>{totals.nao_realizado || 0}</strong>
+            <span>Não realizados</span>
+          </div>
+          <div className="report-metric cancelado">
+            <strong>{totals.cancelado || 0}</strong>
+            <span>Cancelados</span>
+          </div>
+        </div>
+      </div>
+
+      {/* Agendamentos por dia */}
+      <div className="report-section">
+        <div className="report-section-header">
+          <h3 className="report-section-title"><Calendar size={18} /> Agendamentos por dia</h3>
+          <button className="button secondary small" type="button"
+            onClick={() => exportCsv(perDay, ['day', 'total'], 'agendamentos-por-dia.csv')}>
+            <Download size={15} /> Exportar CSV
+          </button>
+        </div>
+        {perDay.length === 0 ? <p className="muted">Nenhum dado.</p> : (
+          <div className="report-table-wrap">
+            <table className="report-table">
+              <thead><tr><th>Data</th><th>Agendamentos</th><th style={{width:'40%'}}>Gráfico</th></tr></thead>
+              <tbody>
+                {perDay.map((row) => (
+                  <tr key={row.day}>
+                    <td>{formatDate(row.day)}</td>
+                    <td className="report-num">{row.total}</td>
+                    <td><div className="report-bar"><div className="report-bar-fill" style={{width: `${Math.round((row.total / maxDay) * 100)}%`}} /></div></td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </div>
+
+      {/* Vagas por clínica */}
+      <div className="report-section">
+        <div className="report-section-header">
+          <h3 className="report-section-title"><Building2 size={18} /> Vagas por clínica</h3>
+          <button className="button secondary small" type="button"
+            onClick={() => exportCsv(perClinic, ['clinic', 'total', 'occupied', 'available'], 'vagas-por-clinica.csv')}>
+            <Download size={15} /> Exportar CSV
+          </button>
+        </div>
+        {perClinic.length === 0 ? <p className="muted">Nenhum dado.</p> : (
+          <div className="report-table-wrap">
+            <table className="report-table">
+              <thead><tr><th>Clínica</th><th>Total</th><th>Ocupadas</th><th>Disponíveis</th><th>Utilização</th></tr></thead>
+              <tbody>
+                {perClinic.map((row) => {
+                  const pct = row.total > 0 ? Math.round((row.occupied / row.total) * 100) : 0;
+                  return (
+                    <tr key={row.clinic}>
+                      <td>{row.clinic}</td>
+                      <td className="report-num">{row.total}</td>
+                      <td className="report-num">{row.occupied}</td>
+                      <td className="report-num">{row.available}</td>
+                      <td>
+                        <div className="report-bar">
+                          <div className="report-bar-fill utilization" style={{width: `${pct}%`}} />
+                        </div>
+                        <span className="report-pct">{pct}%</span>
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </div>
+
+      {/* Castrações realizadas por clínica */}
+      <div className="report-section">
+        <div className="report-section-header">
+          <h3 className="report-section-title"><CheckCircle2 size={18} /> Castrações realizadas por clínica</h3>
+          <button className="button secondary small" type="button"
+            onClick={() => exportCsv(castrationsByClinic, ['clinic', 'done'], 'castracoes-por-clinica.csv')}>
+            <Download size={15} /> Exportar CSV
+          </button>
+        </div>
+        {castrationsByClinic.length === 0 ? <p className="muted">Nenhuma castração registrada como realizada.</p> : (
+          <div className="report-table-wrap">
+            <table className="report-table">
+              <thead><tr><th>Clínica</th><th>Realizadas</th></tr></thead>
+              <tbody>
+                {castrationsByClinic.map((row) => (
+                  <tr key={row.clinic}>
+                    <td>{row.clinic}</td>
+                    <td className="report-num">{row.done}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </div>
+
+      {/* Castrações por espécie/sexo */}
+      <div className="report-section">
+        <div className="report-section-header">
+          <h3 className="report-section-title"><CheckCircle2 size={18} /> Castrações realizadas por tipo</h3>
+          <button className="button secondary small" type="button"
+            onClick={() => exportCsv(castrationsByType, ['label', 'done'], 'castracoes-por-tipo.csv')}>
+            <Download size={15} /> Exportar CSV
+          </button>
+        </div>
+        {castrationsByType.length === 0 ? <p className="muted">Nenhuma castração registrada como realizada.</p> : (
+          <div className="report-table-wrap">
+            <table className="report-table">
+              <thead><tr><th>Tipo</th><th>Realizadas</th></tr></thead>
+              <tbody>
+                {castrationsByType.map((row) => (
+                  <tr key={row.label}>
+                    <td>{capitalize(row.label)}</td>
+                    <td className="report-num">{row.done}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </div>
+
+    </div>
+  );
+}
+
+function AdminSummary({ summary, reports }) {
+  if (!summary) return <Loading label="Carregando resumo" />;
+
+  function exportCsv(rows, headers, filename) {
+    const lines = [headers.join(','), ...rows.map((r) => headers.map((h) => `"${r[h] ?? ''}"`).join(','))];
+    const blob = new Blob([lines.join('\n')], { type: 'text/csv;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url; a.download = filename; a.click();
+    URL.revokeObjectURL(url);
+  }
+
+  return (
+    <div className="summary-dashboard">
+      <div className="summary-grid">
+        <Metric icon={Calendar} label="Total de vagas" value={summary.slots.total} />
+        <Metric icon={CheckCircle2} label="Vagas preenchidas" value={summary.slots.occupied} />
+        <Metric icon={AlertCircle} label="Disponíveis" value={summary.slots.available} />
+        <Metric icon={XCircle} label="Não realizados" value={summary.appointments.nao_realizado || 0} />
+        <Metric icon={Shield} label="Protetores" value={summary.users.protetor || 0} />
+        <Metric icon={UserRound} label="Tutores" value={summary.users.tutor || 0} />
+      </div>
+
+      {reports ? (
+        <div className="reports-layout" style={{marginTop: '24px'}}>
+
+          <div className="report-section">
+            <h3 className="report-section-title"><BarChart2 size={18} /> Agendamentos por status</h3>
+            <div className="report-metrics">
+              <div className="report-metric agendado">
+                <strong>{reports.totals.agendado || 0}</strong><span>Agendados</span>
+              </div>
+              <div className="report-metric realizado">
+                <strong>{reports.totals.realizado || 0}</strong><span>Realizados</span>
+              </div>
+              <div className="report-metric nao_realizado">
+                <strong>{reports.totals.nao_realizado || 0}</strong><span>Não realizados</span>
+              </div>
+              <div className="report-metric cancelado">
+                <strong>{reports.totals.cancelado || 0}</strong><span>Cancelados</span>
+              </div>
+            </div>
+          </div>
+
+          <div className="report-section">
+            <div className="report-section-header">
+              <h3 className="report-section-title"><Building2 size={18} /> Vagas por clínica</h3>
+              <button className="button secondary small" type="button"
+                onClick={() => exportCsv(reports.perClinic, ['clinic','total','occupied','available'], 'vagas-por-clinica.csv')}>
+                <Download size={15} /> CSV
+              </button>
+            </div>
+            {reports.perClinic.length === 0 ? <p className="muted">Nenhum dado.</p> : (
+              <div className="report-table-wrap">
+                <table className="report-table">
+                  <thead><tr><th>Clínica</th><th>Total</th><th>Ocupadas</th><th>Disponíveis</th><th>Utilização</th></tr></thead>
+                  <tbody>
+                    {reports.perClinic.map((row) => {
+                      const pct = row.total > 0 ? Math.round((row.occupied / row.total) * 100) : 0;
+                      return (
+                        <tr key={row.clinic}>
+                          <td>{row.clinic}</td>
+                          <td className="report-num">{row.total}</td>
+                          <td className="report-num">{row.occupied}</td>
+                          <td className="report-num">{row.available}</td>
+                          <td>
+                            <div style={{display:'flex',alignItems:'center',gap:6}}>
+                              <div className="report-bar" style={{flex:1}}><div className="report-bar-fill utilization" style={{width:`${pct}%`}} /></div>
+                              <span className="report-pct">{pct}%</span>
+                            </div>
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </div>
+
+          <div className="report-section">
+            <div className="report-section-header">
+              <h3 className="report-section-title"><CheckCircle2 size={18} /> Castrações realizadas por clínica</h3>
+              <button className="button secondary small" type="button"
+                onClick={() => exportCsv(reports.castrationsByClinic, ['clinic','done'], 'castracoes-por-clinica.csv')}>
+                <Download size={15} /> CSV
+              </button>
+            </div>
+            {reports.castrationsByClinic.length === 0 ? <p className="muted">Nenhuma castração registrada.</p> : (
+              <div className="report-table-wrap">
+                <table className="report-table">
+                  <thead><tr><th>Clínica</th><th>Realizadas</th></tr></thead>
+                  <tbody>
+                    {reports.castrationsByClinic.map((row) => (
+                      <tr key={row.clinic}><td>{row.clinic}</td><td className="report-num">{row.done}</td></tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </div>
+
+          <div className="report-section">
+            <div className="report-section-header">
+              <h3 className="report-section-title"><Calendar size={18} /> Agendamentos por dia (últimos 90 dias)</h3>
+              <button className="button secondary small" type="button"
+                onClick={() => exportCsv(reports.perDay, ['day','total'], 'agendamentos-por-dia.csv')}>
+                <Download size={15} /> CSV
+              </button>
+            </div>
+            {reports.perDay.length === 0 ? <p className="muted">Nenhum agendamento.</p> : (() => {
+              const maxDay = Math.max(...reports.perDay.map((r) => r.total), 1);
+              return (
+                <div className="report-table-wrap">
+                  <table className="report-table">
+                    <thead><tr><th>Data</th><th>Agendamentos</th><th style={{width:'40%'}}>Gráfico</th></tr></thead>
+                    <tbody>
+                      {reports.perDay.map((row) => (
+                        <tr key={row.day}>
+                          <td>{formatDate(row.day)}</td>
+                          <td className="report-num">{row.total}</td>
+                          <td><div className="report-bar"><div className="report-bar-fill" style={{width:`${Math.round((row.total/maxDay)*100)}%`}} /></div></td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              );
+            })()}
+          </div>
+
+        </div>
+      ) : null}
     </div>
   );
 }

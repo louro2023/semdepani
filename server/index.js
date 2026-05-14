@@ -258,6 +258,60 @@ app.get('/api/admin/summary', requireAdmin, (_req, res) => {
   });
 });
 
+app.get('/api/admin/reports', requireAdmin, (_req, res) => {
+  const totalsRaw = db.prepare(`
+    SELECT status, COUNT(*) AS total FROM appointments GROUP BY status
+  `).all();
+  const totals = Object.fromEntries(totalsRaw.map((r) => [r.status, r.total]));
+
+  const perDay = db.prepare(`
+    SELECT date(a.created_at, 'localtime') AS day, COUNT(*) AS total
+    FROM appointments a
+    WHERE a.status != 'cancelado'
+    GROUP BY day
+    ORDER BY day DESC
+    LIMIT 90
+  `).all();
+
+  const perClinic = db.prepare(`
+    SELECT COALESCE(c.name, s.clinic) AS clinic,
+      SUM(s.total_quantity) AS total,
+      SUM(s.occupied_quantity) AS occupied,
+      SUM(s.total_quantity - s.occupied_quantity) AS available
+    FROM slots s
+    LEFT JOIN clinics c ON c.id = s.clinic_id
+    WHERE s.active = 1
+    GROUP BY COALESCE(c.name, s.clinic)
+    ORDER BY clinic
+  `).all();
+
+  const castrationsByClinic = db.prepare(`
+    SELECT COALESCE(c.name, s.clinic) AS clinic, COUNT(*) AS done
+    FROM appointments a
+    JOIN slots s ON s.id = a.slot_id
+    LEFT JOIN clinics c ON c.id = s.clinic_id
+    WHERE a.status = 'realizado'
+    GROUP BY COALESCE(c.name, s.clinic)
+    ORDER BY done DESC
+  `).all();
+
+  const castrationsByTypeRaw = db.prepare(`
+    SELECT an.species, an.sex, COUNT(*) AS done
+    FROM appointments a
+    JOIN animals an ON an.id = a.animal_id
+    WHERE a.status = 'realizado'
+    GROUP BY an.species, an.sex
+    ORDER BY done DESC
+  `).all();
+
+  const castrationsByType = castrationsByTypeRaw.map((r) => ({
+    ...r,
+    label: animalTypeLabel(r.species, r.sex)
+  }));
+
+  res.json({ totals, perDay, perClinic, castrationsByClinic, castrationsByType });
+});
+
 app.get('/api/admin/clinics', requireAdmin, (_req, res) => {
   const clinics = db.prepare(`
     SELECT id, name, address, neighborhood, phone, active, created_at
