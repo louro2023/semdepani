@@ -447,7 +447,7 @@ function Wizard({ auth, setAuth, onDone }) {
                   ))}
                   <div className="wiz-doc-notice">
                     <AlertCircle size={18} />
-                    <strong>Documentos obrigatórios no posto:</strong> identidade, CPF e comprovante de residência de Nova Iguaçu devem ser apresentados em original no dia da castração. Não há possibilidade de envio digital.
+                    <strong>Documentos obrigatórios no posto:</strong> leve cópias de identidade, CPF e comprovante de residência de Nova Iguaçu no dia da castração. Não há possibilidade de envio digital.
                   </div>
                   <div className="wiz-checks">
                     <label className="check-row">
@@ -546,7 +546,7 @@ function Wizard({ auth, setAuth, onDone }) {
                     <ClipboardCheck size={30} />
                   </div>
                   <h3>Confirme sua inscrição</h3>
-                  <p>A clínica escolhida atribuirá automaticamente o primeiro horário compatível. Lembre-se de levar os documentos originais no dia.</p>
+                  <p>A clínica escolhida atribuirá automaticamente o primeiro horário compatível. Lembre-se de levar as cópias dos documentos no dia.</p>
                   <div className="wiz-review-grid">
                     <span>Perfil</span><strong>{auth?.user?.role === 'protetor' || role === 'protetor' ? 'Protetor animal' : 'Tutor'}</strong>
                     <span>Animal</span><strong>{animal.name} · {animalLabel(animal.species, animal.sex)}</strong>
@@ -703,7 +703,7 @@ function UserDashboard({ auth, setView }) {
       </div>
       <div className="doc-required-notice">
         <AlertCircle size={18} />
-        <span><strong>Documentos obrigatórios no posto:</strong> leve identidade, CPF e comprovante de residência de Nova Iguaçu em original no dia da castração.</span>
+        <span><strong>Documentos obrigatórios no posto:</strong> leve cópias de identidade, CPF e comprovante de residência de Nova Iguaçu no dia da castração.</span>
       </div>
       <button className="button primary" type="button" onClick={() => setView('inscricao')}>
         <CalendarPlus size={18} /> Novo agendamento
