@@ -782,14 +782,13 @@ function AdminPanel({ auth }) {
 
   async function loadAll() {
     try {
-      const [summaryData, slotsData, clinicsData, appointmentsData, usersData, protectorsData, reportsData] = await Promise.all([
+      const [summaryData, slotsData, clinicsData, appointmentsData, usersData, protectorsData] = await Promise.all([
         request('/admin/summary', {}, auth.token),
         request('/admin/slots', {}, auth.token),
         request('/admin/clinics', {}, auth.token),
         request('/admin/appointments', {}, auth.token),
         request('/admin/users', {}, auth.token),
-        request('/admin/protectors', {}, auth.token),
-        request('/admin/reports', {}, auth.token)
+        request('/admin/protectors', {}, auth.token)
       ]);
       setSummary(summaryData);
       setSlots(slotsData.slots || []);
@@ -797,6 +796,7 @@ function AdminPanel({ auth }) {
       setAppointments(appointmentsData.appointments || []);
       setUsers(usersData.users || []);
       setProtectors(protectorsData.protectors || []);
+      const reportsData = await request('/admin/reports', {}, auth.token).catch(() => null);
       setReports(reportsData);
       setError('');
     } catch (err) {
@@ -843,7 +843,7 @@ function AdminPanel({ auth }) {
 }
 
 function ReportsTab({ reports }) {
-  if (!reports) return <Loading label="Carregando relatórios" />;
+  if (!reports?.totals) return <Loading label="Carregando relatórios" />;
 
   const { totals, perDay, perClinic, castrationsByClinic, castrationsByType } = reports;
 
@@ -1027,7 +1027,7 @@ function AdminSummary({ summary, reports }) {
         <Metric icon={UserRound} label="Tutores" value={summary.users.tutor || 0} />
       </div>
 
-      {reports ? (
+      {reports?.totals ? (
         <div className="reports-layout" style={{marginTop: '24px'}}>
 
           <div className="report-section">
