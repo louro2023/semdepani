@@ -147,13 +147,10 @@ app.post('/api/public/inscricao', (req, res) => {
 
 app.get('/api/me', requireAuth, (req, res) => {
   const user = getUserById(req.user.id);
-  const used = user.role === 'protetor'
-    ? getTotalUsage(user.id)
-    : getMonthlyUsage(user.id, new Date().toISOString().slice(0, 10));
   res.json({
     user: publicUser(user),
     limit: ROLE_LIMITS[user.role] || 1,
-    currentMonthUsed: used,
+    currentMonthUsed: get30DayUsage(user.id),
     appointments: listAppointments({ userId: user.id })
   });
 });
@@ -608,25 +605,12 @@ function createAutomaticAppointment(user, animalInput, terms, clinicId) {
       );
     }
 
-    const currentUsage = user.role === 'protetor'
-      ? getTotalUsage(user.id)
-      : null;
-
-    let selectedSlot = null;
-    for (const slot of slots) {
-      const usedCount = user.role === 'protetor' ? currentUsage : getMonthlyUsage(user.id, slot.date);
-      if (usedCount < limit) {
-        selectedSlot = slot;
-        break;
-      }
+    const currentUsage = get30DayUsage(user.id);
+    if (currentUsage >= limit) {
+      throw httpError(409, `Limite de ${limit} agendamento(s) a cada 30 dias atingido.`);
     }
 
-    if (!selectedSlot) {
-      throw httpError(409, user.role === 'protetor'
-        ? `Limite atingido. Protetores podem realizar até ${limit} agendamentos no total.`
-        : `Limite mensal atingido. Tutores têm 1 vaga por mês.`
-      );
-    }
+    const selectedSlot = slots[0];
 
     const update = db.prepare(`
       UPDATE slots
@@ -671,11 +655,13 @@ function getMonthlyUsage(userId, dateString) {
   `).get(userId, start, end).total;
 }
 
-function getTotalUsage(userId) {
+function get30DayUsage(userId) {
   return db.prepare(`
     SELECT COUNT(*) AS total
     FROM appointments
-    WHERE user_id = ? AND status != 'cancelado'
+    WHERE user_id = ?
+      AND status != 'cancelado'
+      AND created_at >= datetime('now', '-30 days', 'localtime')
   `).get(userId).total;
 }
 

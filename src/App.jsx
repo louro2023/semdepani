@@ -425,7 +425,7 @@ function Wizard({ auth, setAuth, onDone }) {
               {step === 2 ? (
                 <div className="wiz-terms">
                   {[
-                    'Tutor pode realizar 1 agendamento por mês; protetor cadastrado pode realizar até 4 agendamentos no total.',
+                    'Tutor pode realizar 1 agendamento a cada 30 dias; protetor cadastrado pode realizar até 4 agendamentos a cada 30 dias.',
                     'Chegue no horário informado e permaneça na clínica durante todo o procedimento. O responsável deve estar preparado para transportar o animal sonolento após a cirurgia.',
                     'Cães: coleira, guia e focinheira (se necessário). Gatos: 1 por caixa de transporte.',
                     'Banho no dia anterior ao procedimento, sem pulgas ou carrapatos.',
@@ -696,8 +696,8 @@ function UserDashboard({ auth, setView }) {
         <h2>Olá, {firstName}</h2>
       </div>
       <div className="metric-row">
-        <Metric icon={Calendar} label={data.user.role === 'protetor' ? 'Limite total' : 'Limite mensal'} value={data.limit} />
-        <Metric icon={CheckCircle2} label={data.user.role === 'protetor' ? 'Total usados' : 'Usados no mês'} value={data.currentMonthUsed} />
+        <Metric icon={Calendar} label="Limite (30 dias)" value={data.limit} />
+        <Metric icon={CheckCircle2} label="Usados (30 dias)" value={data.currentMonthUsed} />
       </div>
       <div className="doc-required-notice">
         <AlertCircle size={18} />
