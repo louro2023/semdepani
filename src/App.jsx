@@ -9,7 +9,6 @@ import {
   Edit3,
   Eye,
   FileCheck,
-  FileText,
   Home,
   LogIn,
   LogOut,
@@ -18,7 +17,6 @@ import {
   Save,
   Shield,
   Trash2,
-  Upload,
   UserPlus,
   UserRound,
   Users,
@@ -267,10 +265,10 @@ function HomeView({ availability, auth, setView }) {
             </div>
           </div>
           <div className="how-step">
-            <div className="how-step-icon"><FileText size={26} /></div>
+            <div className="how-step-icon"><Building2 size={26} /></div>
             <div>
-              <strong>2. Documentos</strong>
-              <p>Anexe os documentos exigidos pelo programa municipal de Nova Iguaçu.</p>
+              <strong>2. Escolha a clínica</strong>
+              <p>Selecione a clínica de preferência. O horário é atribuído automaticamente conforme as vagas.</p>
             </div>
           </div>
           <div className="how-step">
@@ -300,12 +298,14 @@ function Wizard({ auth, setAuth, onDone }) {
   } : emptyUser);
   const [terms, setTerms] = useState(emptyTerms);
   const [animal, setAnimal] = useState(emptyAnimal);
-  const [docFiles, setDocFiles] = useState({ doc_residencia: null, doc_cpf: null, doc_identidade: null });
+  const [clinics, setClinics] = useState([]);
+  const [selectedClinicId, setSelectedClinicId] = useState(null);
+  const [clinicsLoading, setClinicsLoading] = useState(false);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
   const [result, setResult] = useState(null);
 
-  const stepTitle = ['Dados do tutor', 'Termos e regras', 'Documentos', 'Dados do animal', 'Agendamento automático'][step - 1];
+  const stepTitle = ['Dados do tutor', 'Termos e regras', 'Dados do animal', 'Escolher clínica', 'Confirmação'][step - 1];
 
   function updateUser(field, value) {
     setUser((current) => ({ ...current, [field]: value }));
@@ -315,10 +315,20 @@ function Wizard({ auth, setAuth, onDone }) {
     setAnimal((current) => ({ ...current, [field]: value }));
   }
 
-  function setDocFile(field, file) {
-    if (file && file.size > 10 * 1024 * 1024) { setError('Arquivo muito grande. Máximo 10MB.'); return; }
-    setError('');
-    setDocFiles((current) => ({ ...current, [field]: file || null }));
+  async function loadClinics() {
+    setClinicsLoading(true);
+    setClinics([]);
+    setSelectedClinicId(null);
+    try {
+      const data = await request(`/clinics/available?species=${animal.species}&sex=${animal.sex}`);
+      const list = data.clinics || [];
+      setClinics(list);
+      if (list.length === 1) setSelectedClinicId(list[0].id);
+    } catch (_err) {
+      setClinics([]);
+    } finally {
+      setClinicsLoading(false);
+    }
   }
 
   function canAdvance() {
@@ -327,8 +337,8 @@ function Wizard({ auth, setAuth, onDone }) {
     }
     if (step === 1 && auth) return true;
     if (step === 2) return terms.requirementsAccepted && terms.documentsAccepted;
-    if (step === 3) return true;
-    if (step === 4) return animal.name && animal.species && animal.sex && animal.breed && animal.approximateAge;
+    if (step === 3) return Boolean(animal.name && animal.species && animal.sex && animal.breed && animal.approximateAge);
+    if (step === 4) return Boolean(selectedClinicId);
     return true;
   }
 
@@ -336,22 +346,14 @@ function Wizard({ auth, setAuth, onDone }) {
     setLoading(true);
     setError('');
     try {
-      let token;
       let appointment;
       if (auth) {
-        const data = await request('/appointments/auto', { method: 'POST', body: { animal, terms } }, auth.token);
-        token = auth.token;
+        const data = await request('/appointments/auto', { method: 'POST', body: { animal, terms, clinicId: selectedClinicId } }, auth.token);
         appointment = data.appointment;
       } else {
-        const data = await request('/public/inscricao', { method: 'POST', body: { user, role, animal, terms } });
-        if (data.token && data.user) { setAuth(data.token, data.user); token = data.token; }
+        const data = await request('/public/inscricao', { method: 'POST', body: { user, role, animal, terms, clinicId: selectedClinicId } });
+        if (data.token && data.user) { setAuth(data.token, data.user); }
         appointment = data.appointment;
-      }
-      const hasFiles = Object.values(docFiles).some(Boolean);
-      if (hasFiles && token) {
-        const form = new FormData();
-        Object.entries(docFiles).forEach(([field, file]) => { if (file) form.append(field, file); });
-        await fetch('/api/me/documents', { method: 'POST', headers: { Authorization: `Bearer ${token}` }, body: form }).catch(() => {});
       }
       setResult(appointment);
       onDone();
@@ -368,6 +370,7 @@ function Wizard({ auth, setAuth, onDone }) {
         <span className="wiz-eyebrow">Etapa {step} de 5</span>
         <h2>{stepTitle}</h2>
       </div>
+
 
       <Stepper current={step} total={5} />
 
@@ -422,18 +425,28 @@ function Wizard({ auth, setAuth, onDone }) {
               {step === 2 ? (
                 <div className="wiz-terms">
                   {[
-                    'Tutor pode realizar 1 agendamento por mês; protetor cadastrado pode realizar até 4.',
-                    'Chegue no horário informado e permaneça na clínica durante todo o procedimento.',
-                    'Cães devem ir com coleira, guia e focinheira quando necessário; gatos devem ir um por caixa de transporte.',
-                    'Animal deve ter entre 6 meses e 7 anos.',
-                    'Peso mínimo: cães 3,5 kg e gatos 2 kg.',
-                    'Animais braquicefálicos não poderão ser castrados pelo programa.',
-                    'Fêmeas não podem estar no cio, gestantes ou amamentando.',
+                    'Tutor pode realizar 1 agendamento por mês; protetor cadastrado pode realizar até 4 agendamentos no total.',
+                    'Chegue no horário informado e permaneça na clínica durante todo o procedimento. O responsável deve estar preparado para transportar o animal sonolento após a cirurgia.',
+                    'Cães: coleira, guia e focinheira (se necessário). Gatos: 1 por caixa de transporte.',
+                    'Banho no dia anterior ao procedimento, sem pulgas ou carrapatos.',
+                    'Idade mínima de 6 meses e máxima de 7 anos.',
+                    'Cães e cadelas: peso mínimo 3,5 kg e máximo 25 kg (salvo análise clínica e autorização expressa do veterinário de plantão).',
+                    'Felinos: peso mínimo de 2 kg.',
+                    'Animais machos devem ter ambos os testículos na bolsa escrotal.',
+                    'Animais braquicefálicos não poderão ser castrados pelo programa (Pug, Shih Tzu, Bulldog Francês e Inglês, Lhasa Apso, Boxer, Pequinês, Boston Terrier, Cavalier King Charles Spaniel, Gato Persa, Chow-chow, American Bully, entre outros).',
+                    'Cadelas e gatas não devem estar no cio, gestantes ou amamentando.',
                     'Jejum absoluto de água e comida por 6 a 8 horas antes do procedimento.',
-                    'Leve cópias de identidade, CPF e comprovante de residência de Nova Iguaçu.'
+                    'Informar ao veterinário se o animal usa qualquer medicação.',
+                    'Animais vacinados há menos de 21 dias não poderão ser castrados. Caso o animal esteja inapto, o procedimento será negado.',
+                    'É obrigatório residir no município de Nova Iguaçu.',
+                    'Tutores devem levar cópias de identidade, CPF e comprovante de residência de Nova Iguaçu. Em caso de terceiros, o mesmo deverá levar identidade, CPF e comprovante de residência de Nova Iguaçu.'
                   ].map((item) => (
                     <div className="wiz-rule" key={item}><FileCheck size={16} />{item}</div>
                   ))}
+                  <div className="wiz-doc-notice">
+                    <AlertCircle size={18} />
+                    <strong>Documentos obrigatórios no posto:</strong> identidade, CPF e comprovante de residência de Nova Iguaçu devem ser apresentados em original no dia da castração. Não há possibilidade de envio digital.
+                  </div>
                   <div className="wiz-checks">
                     <label className="check-row">
                       <input
@@ -449,39 +462,13 @@ function Wizard({ auth, setAuth, onDone }) {
                         checked={terms.documentsAccepted}
                         onChange={(event) => setTerms((current) => ({ ...current, documentsAccepted: event.target.checked }))}
                       />
-                      <span>Levarei os documentos no dia</span>
+                      <span>Entendo que devo levar os documentos originais ao posto no dia</span>
                     </label>
                   </div>
                 </div>
               ) : null}
 
               {step === 3 ? (
-                <div>
-                  <p className="wiz-doc-hint">Envio opcional — você também pode apresentar os originais no dia. Máximo 10 MB por arquivo (PDF, JPG ou PNG).</p>
-                  <div className="wiz-drop-grid">
-                    {DOC_FIELDS.map(({ field, label }) => {
-                      const file = docFiles[field];
-                      return (
-                        <label key={field} className={`wiz-drop-zone ${file ? 'has-file' : ''}`}>
-                          <input
-                            type="file"
-                            accept=".pdf,.jpg,.jpeg,.png,.webp"
-                            style={{ display: 'none' }}
-                            onChange={(e) => setDocFile(field, e.target.files[0])}
-                          />
-                          {file ? <FileCheck size={26} /> : <Upload size={26} />}
-                          <span className="wiz-dz-label">{label}</span>
-                          {file
-                            ? <span className="wiz-dz-file">{file.name.length > 24 ? `${file.name.slice(0, 22)}…` : file.name}</span>
-                            : <span className="wiz-dz-hint">PDF, JPG ou PNG<br />máx 10 MB</span>}
-                        </label>
-                      );
-                    })}
-                  </div>
-                </div>
-              ) : null}
-
-              {step === 4 ? (
                 <div className="wiz-animal-grid">
                   <div className="wiz-pickers-row">
                     <div className="wiz-picker">
@@ -519,18 +506,50 @@ function Wizard({ auth, setAuth, onDone }) {
                 </div>
               ) : null}
 
+              {step === 4 ? (
+                <div className="wiz-clinic-step">
+                  <p className="wiz-clinic-hint">Escolha a clínica onde deseja ser atendido. O horário será definido automaticamente conforme as vagas disponíveis.</p>
+                  {clinicsLoading ? (
+                    <Loading label="Buscando clínicas disponíveis…" />
+                  ) : clinics.length === 0 ? (
+                    <div className="wiz-no-clinics">
+                      <AlertCircle size={20} />
+                      <span>Nenhuma clínica com vagas disponíveis para {animalLabel(animal.species, animal.sex)} no momento.</span>
+                    </div>
+                  ) : (
+                    <div className="wiz-clinic-list">
+                      {clinics.map((clinic) => (
+                        <button
+                          key={clinic.id}
+                          type="button"
+                          className={`wiz-clinic-opt ${selectedClinicId === clinic.id ? 'active' : ''}`}
+                          onClick={() => setSelectedClinicId(clinic.id)}
+                        >
+                          <Building2 size={20} />
+                          <div className="wiz-clinic-info">
+                            <strong>{clinic.name}</strong>
+                            <span>{clinic.address}</span>
+                          </div>
+                          <span className="wiz-clinic-slots">{clinic.available_slots} vaga{clinic.available_slots !== 1 ? 's' : ''}</span>
+                        </button>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              ) : null}
+
               {step === 5 ? (
                 <div className="wiz-confirm">
                   <div className="wiz-confirm-icon">
                     <ClipboardCheck size={30} />
                   </div>
-                  <h3>O sistema escolherá a primeira vaga compatível</h3>
-                  <p>A distribuição respeita ordem de data, clínica, espécie, sexo e limite mensal do perfil. O tutor não escolhe horário manualmente.</p>
+                  <h3>Confirme sua inscrição</h3>
+                  <p>A clínica escolhida atribuirá automaticamente o primeiro horário compatível. Lembre-se de levar os documentos originais no dia.</p>
                   <div className="wiz-review-grid">
                     <span>Perfil</span><strong>{auth?.user?.role === 'protetor' || role === 'protetor' ? 'Protetor animal' : 'Tutor'}</strong>
                     <span>Animal</span><strong>{animal.name} · {animalLabel(animal.species, animal.sex)}</strong>
                     <span>Raça e idade</span><strong>{animal.breed} · {animal.approximateAge}</strong>
-                    <span>Documentos</span><strong>{Object.values(docFiles).filter(Boolean).length} de 3 selecionados</strong>
+                    <span>Clínica</span><strong>{clinics.find((c) => c.id === selectedClinicId)?.name || '—'}</strong>
                   </div>
                 </div>
               ) : null}
@@ -542,7 +561,7 @@ function Wizard({ auth, setAuth, onDone }) {
               Voltar
             </button>
             {step < 5 ? (
-              <button className="button primary" type="button" onClick={() => setStep((value) => value + 1)} disabled={!canAdvance()}>
+              <button className="button primary" type="button" onClick={() => { if (step === 3) { setStep(4); loadClinics(); } else setStep((value) => value + 1); }} disabled={!canAdvance()}>
                 Continuar
               </button>
             ) : (
@@ -637,76 +656,6 @@ async function openDocument(userId, type, token) {
   }
 }
 
-function DocumentUpload({ auth, user, onUpdate }) {
-  const [uploading, setUploading] = useState(false);
-  const [error, setError] = useState('');
-  const [success, setSuccess] = useState('');
-
-  async function handleFile(field, file) {
-    if (!file) return;
-    if (file.size > 10 * 1024 * 1024) { setError('Arquivo muito grande. Máximo 10MB.'); return; }
-    setUploading(true);
-    setError('');
-    try {
-      const form = new FormData();
-      form.append(field, file);
-      const res = await fetch('/api/me/documents', {
-        method: 'POST',
-        headers: { Authorization: `Bearer ${auth.token}` },
-        body: form
-      });
-      const data = await res.json().catch(() => ({}));
-      if (!res.ok) throw new Error(data.message || 'Erro ao enviar.');
-      setSuccess('Documento enviado!');
-      if (onUpdate) onUpdate(data.user);
-      setTimeout(() => setSuccess(''), 3000);
-    } catch (err) {
-      setError(err.message);
-    } finally {
-      setUploading(false);
-    }
-  }
-
-  return (
-    <div className="doc-upload-section">
-      <div className="section-title compact">
-        <span className="eyebrow">Documentação</span>
-        <h2>Meus documentos</h2>
-        <p className="muted">Envie antes do dia da castração. Máximo 10MB por arquivo (PDF, JPG ou PNG).</p>
-      </div>
-      {error ? <InlineAlert message={error} /> : null}
-      {success ? <div className="inline-success"><CheckCircle2 size={18} />{success}</div> : null}
-      <div className="doc-list">
-        {DOC_FIELDS.map(({ field, label }) => {
-          const uploaded = Boolean(user[field]);
-          return (
-            <div className="doc-item" key={field}>
-              <div className="doc-info">
-                {uploaded
-                  ? <FileCheck size={18} className="doc-icon ok" />
-                  : <FileText size={18} className="doc-icon missing" />}
-                <span>{label}</span>
-                <span className={`doc-badge ${uploaded ? 'ok' : 'missing'}`}>
-                  {uploaded ? 'Enviado' : 'Pendente'}
-                </span>
-              </div>
-              <label className="button secondary doc-btn">
-                <Upload size={15} /> {uploaded ? 'Substituir' : 'Enviar'}
-                <input
-                  type="file"
-                  accept=".pdf,.jpg,.jpeg,.png,.webp"
-                  style={{ display: 'none' }}
-                  disabled={uploading}
-                  onChange={(e) => handleFile(field, e.target.files[0])}
-                />
-              </label>
-            </div>
-          );
-        })}
-      </div>
-    </div>
-  );
-}
 
 function UserDashboard({ auth, setView }) {
   const [data, setData] = useState(null);
@@ -747,8 +696,12 @@ function UserDashboard({ auth, setView }) {
         <h2>Olá, {firstName}</h2>
       </div>
       <div className="metric-row">
-        <Metric icon={Calendar} label="Limite mensal" value={data.limit} />
-        <Metric icon={CheckCircle2} label="Usados no mês" value={data.currentMonthUsed} />
+        <Metric icon={Calendar} label={data.user.role === 'protetor' ? 'Limite total' : 'Limite mensal'} value={data.limit} />
+        <Metric icon={CheckCircle2} label={data.user.role === 'protetor' ? 'Total usados' : 'Usados no mês'} value={data.currentMonthUsed} />
+      </div>
+      <div className="doc-required-notice">
+        <AlertCircle size={18} />
+        <span><strong>Documentos obrigatórios no posto:</strong> leve identidade, CPF e comprovante de residência de Nova Iguaçu em original no dia da castração.</span>
       </div>
       <button className="button primary" type="button" onClick={() => setView('inscricao')}>
         <CalendarPlus size={18} /> Novo agendamento
@@ -774,11 +727,6 @@ function UserDashboard({ auth, setView }) {
           </article>
         )) : <p className="muted">Nenhum agendamento encontrado.</p>}
       </div>
-      <DocumentUpload
-        auth={auth}
-        user={data.user}
-        onUpdate={(updatedUser) => setData((prev) => ({ ...prev, user: updatedUser }))}
-      />
     </section>
   );
 }
@@ -1380,7 +1328,7 @@ function UserManager({ title, users, clinics, reload, auth, defaultRole }) {
 }
 
 function Stepper({ current, total = 4 }) {
-  const labels = ['Tutor', 'Termos', 'Documentos', 'Animal', 'Confirmar'];
+  const labels = ['Tutor', 'Termos', 'Animal', 'Clínica', 'Confirmar'];
   const steps = Array.from({ length: total }, (_, i) => i + 1);
   const items = [];
   steps.forEach((num, idx) => {

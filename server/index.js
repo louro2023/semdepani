@@ -73,6 +73,26 @@ app.get('/api/health', (_req, res) => {
   res.json({ ok: true, name: 'Castração Animal Nova Iguaçu' });
 });
 
+app.get('/api/clinics/available', (req, res) => {
+  const { species, sex } = req.query;
+  if (!species || !sex) return res.status(400).json({ message: 'species e sex são obrigatórios.' });
+  const clinics = db.prepare(`
+    SELECT c.id, c.name, c.address, c.neighborhood,
+      SUM(s.total_quantity - s.occupied_quantity) AS available_slots
+    FROM clinics c
+    JOIN slots s ON s.clinic_id = c.id
+    WHERE c.active = 1
+      AND s.active = 1
+      AND s.date >= date('now', 'localtime')
+      AND s.species = ?
+      AND s.sex = ?
+      AND s.occupied_quantity < s.total_quantity
+    GROUP BY c.id
+    ORDER BY c.name
+  `).all(species, sex);
+  res.json({ clinics });
+});
+
 app.get('/api/availability', (_req, res) => {
   const rows = db.prepare(`
     SELECT species, sex, SUM(total_quantity) AS total, SUM(occupied_quantity) AS occupied
@@ -111,10 +131,10 @@ app.post('/api/auth/register', (req, res) => {
 
 app.post('/api/public/inscricao', (req, res) => {
   try {
-    const { user, animal, terms, role = 'tutor' } = req.body;
+    const { user, animal, terms, role = 'tutor', clinicId = null } = req.body;
     validateTerms(terms);
     const savedUser = registerOrActivateUser(user, role, { allowExistingPassword: true });
-    const appointment = createAutomaticAppointment(savedUser, animal, terms);
+    const appointment = createAutomaticAppointment(savedUser, animal, terms, clinicId);
     res.status(201).json({
       token: signToken(savedUser),
       user: publicUser(savedUser),
@@ -127,10 +147,13 @@ app.post('/api/public/inscricao', (req, res) => {
 
 app.get('/api/me', requireAuth, (req, res) => {
   const user = getUserById(req.user.id);
+  const used = user.role === 'protetor'
+    ? getTotalUsage(user.id)
+    : getMonthlyUsage(user.id, new Date().toISOString().slice(0, 10));
   res.json({
     user: publicUser(user),
     limit: ROLE_LIMITS[user.role] || 1,
-    currentMonthUsed: getMonthlyUsage(user.id, new Date().toISOString().slice(0, 10)),
+    currentMonthUsed: used,
     appointments: listAppointments({ userId: user.id })
   });
 });
@@ -188,7 +211,7 @@ app.post('/api/appointments/auto', requireAuth, (req, res) => {
   try {
     const user = getUserById(req.user.id);
     validateTerms(req.body.terms);
-    const appointment = createAutomaticAppointment(user, req.body.animal, req.body.terms);
+    const appointment = createAutomaticAppointment(user, req.body.animal, req.body.terms, req.body.clinicId || null);
     res.status(201).json({ appointment });
   } catch (error) {
     sendError(res, error);
@@ -546,7 +569,7 @@ function parseClinic(input = {}) {
   return clinic;
 }
 
-function createAutomaticAppointment(user, animalInput, terms) {
+function createAutomaticAppointment(user, animalInput, terms, clinicId) {
   if (!['tutor', 'protetor'].includes(user.role)) {
     throw httpError(403, 'Somente tutores e protetores podem solicitar agendamento.');
   }
@@ -561,30 +584,48 @@ function createAutomaticAppointment(user, animalInput, terms) {
       VALUES (?, ?, ?, ?, ?, ?)
     `).run(user.id, animal.name, animal.species, animal.sex, animal.breed, animal.approximate_age);
 
-    const slots = db.prepare(`
-      SELECT *
-      FROM slots
-      WHERE active = 1
-        AND date >= date('now', 'localtime')
-        AND species = ?
-        AND sex = ?
-        AND occupied_quantity < total_quantity
-      ORDER BY date ASC, time ASC, id ASC
-    `).all(animal.species, animal.sex);
+    const slots = clinicId
+      ? db.prepare(`
+          SELECT * FROM slots
+          WHERE active = 1 AND date >= date('now', 'localtime')
+            AND species = ? AND sex = ?
+            AND occupied_quantity < total_quantity
+            AND clinic_id = ?
+          ORDER BY date ASC, time ASC, id ASC
+        `).all(animal.species, animal.sex, clinicId)
+      : db.prepare(`
+          SELECT * FROM slots
+          WHERE active = 1 AND date >= date('now', 'localtime')
+            AND species = ? AND sex = ?
+            AND occupied_quantity < total_quantity
+          ORDER BY date ASC, time ASC, id ASC
+        `).all(animal.species, animal.sex);
 
-    if (!slots.length) throw httpError(409, `Não há vagas disponíveis para ${animalTypeLabel(animal.species, animal.sex)}.`);
+    if (!slots.length) {
+      throw httpError(409, clinicId
+        ? `Não há vagas disponíveis para ${animalTypeLabel(animal.species, animal.sex)} na clínica selecionada.`
+        : `Não há vagas disponíveis para ${animalTypeLabel(animal.species, animal.sex)}.`
+      );
+    }
+
+    const currentUsage = user.role === 'protetor'
+      ? getTotalUsage(user.id)
+      : null;
 
     let selectedSlot = null;
     for (const slot of slots) {
-      const usedInMonth = getMonthlyUsage(user.id, slot.date);
-      if (usedInMonth < limit) {
+      const usedCount = user.role === 'protetor' ? currentUsage : getMonthlyUsage(user.id, slot.date);
+      if (usedCount < limit) {
         selectedSlot = slot;
         break;
       }
     }
 
     if (!selectedSlot) {
-      throw httpError(409, `Limite mensal atingido para as vagas disponíveis. Tutor tem 1 vaga/mês e protetor tem 4 vagas/mês.`);
+      throw httpError(409, user.role === 'protetor'
+        ? `Limite atingido. Protetores podem realizar até ${limit} agendamentos no total.`
+        : `Limite mensal atingido. Tutores têm 1 vaga por mês.`
+      );
     }
 
     const update = db.prepare(`
@@ -628,6 +669,14 @@ function getMonthlyUsage(userId, dateString) {
       AND s.date >= ?
       AND s.date < ?
   `).get(userId, start, end).total;
+}
+
+function getTotalUsage(userId) {
+  return db.prepare(`
+    SELECT COUNT(*) AS total
+    FROM appointments
+    WHERE user_id = ? AND status != 'cancelado'
+  `).get(userId).total;
 }
 
 function listAppointments({ userId, clinicId, appointmentId } = {}) {
