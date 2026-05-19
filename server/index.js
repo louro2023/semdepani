@@ -84,6 +84,7 @@ app.get('/api/clinics/available', (req, res) => {
     WHERE c.active = 1
       AND s.active = 1
       AND s.date >= date('now', 'localtime')
+      AND strftime('%Y-%m', s.date) = strftime('%Y-%m', 'now', 'localtime')
       AND s.species = ?
       AND s.sex = ?
       AND s.occupied_quantity < s.total_quantity
@@ -362,6 +363,24 @@ app.delete('/api/admin/clinics/:id', requireAdmin, (req, res) => {
   try {
     const current = getClinic(req.params.id);
     if (!current) throw httpError(404, 'Clínica não encontrada.');
+    if (req.query.permanent === 'true') {
+      const hasAppointments = db.prepare(`
+        SELECT COUNT(*) AS total FROM appointments a
+        JOIN slots s ON s.id = a.slot_id
+        WHERE s.clinic_id = ? AND a.status NOT IN ('cancelado')
+      `).get(req.params.id).total;
+      if (hasAppointments > 0) throw httpError(400, 'Não é possível excluir clínica com agendamentos ativos vinculados.');
+      db.exec('BEGIN IMMEDIATE');
+      try {
+        db.prepare('DELETE FROM slots WHERE clinic_id = ?').run(req.params.id);
+        db.prepare('DELETE FROM clinics WHERE id = ?').run(req.params.id);
+        db.exec('COMMIT');
+      } catch (err) {
+        db.exec('ROLLBACK');
+        throw err;
+      }
+      return res.json({ deleted: true });
+    }
     const hasSlots = db.prepare('SELECT COUNT(*) AS total FROM slots WHERE clinic_id = ? AND active = 1').get(req.params.id).total;
     if (hasSlots > 0) throw httpError(400, 'Não é possível desativar clínica com vagas ativas.');
     db.prepare('UPDATE clinics SET active = 0, updated_at = CURRENT_TIMESTAMP WHERE id = ?').run(req.params.id);
@@ -384,6 +403,34 @@ app.get('/api/admin/slots', requireAdmin, (_req, res) => {
     ORDER BY s.date ASC, s.time ASC, clinic ASC
   `).all();
   res.json({ slots: slots.map((slot) => ({ ...slot, label: animalTypeLabel(slot.species, slot.sex) })) });
+});
+
+app.post('/api/admin/slots/renew', requireAdmin, (req, res) => {
+  try {
+    const ids = req.body.ids;
+    if (!Array.isArray(ids) || ids.length === 0) throw httpError(400, 'Selecione ao menos uma vaga.');
+    const created = [];
+    db.exec('BEGIN IMMEDIATE');
+    try {
+      for (const id of ids) {
+        const slot = getSlot(id);
+        if (!slot) throw httpError(404, `Vaga ${id} não encontrada.`);
+        const newDate = db.prepare("SELECT date(?, '+1 month') AS d").get(slot.date).d;
+        const result = db.prepare(`
+          INSERT INTO slots (date, time, species, sex, total_quantity, occupied_quantity, clinic_id, clinic, active)
+          VALUES (?, ?, ?, ?, ?, 0, ?, ?, 1)
+        `).run(newDate, slot.time, slot.species, slot.sex, slot.total_quantity, slot.clinic_id, slot.clinic);
+        created.push(getSlot(result.lastInsertRowid));
+      }
+      db.exec('COMMIT');
+    } catch (err) {
+      db.exec('ROLLBACK');
+      throw err;
+    }
+    res.status(201).json({ slots: created, count: created.length });
+  } catch (error) {
+    sendError(res, error);
+  }
 });
 
 app.post('/api/admin/slots', requireAdmin, (req, res) => {
@@ -425,6 +472,11 @@ app.delete('/api/admin/slots/:id', requireAdmin, (req, res) => {
   try {
     const current = getSlot(req.params.id);
     if (!current) throw httpError(404, 'Vaga não encontrada.');
+    if (req.query.permanent === 'true') {
+      if (current.occupied_quantity > 0) throw httpError(400, 'Não é possível excluir vaga com agendamentos.');
+      db.prepare('DELETE FROM slots WHERE id = ?').run(req.params.id);
+      return res.json({ deleted: true });
+    }
     db.prepare('UPDATE slots SET active = 0, updated_at = CURRENT_TIMESTAMP WHERE id = ?').run(req.params.id);
     res.json({ slot: getSlot(req.params.id) });
   } catch (error) {
@@ -639,6 +691,7 @@ function createAutomaticAppointment(user, animalInput, terms, clinicId) {
       ? db.prepare(`
           SELECT * FROM slots
           WHERE active = 1 AND date >= date('now', 'localtime')
+            AND strftime('%Y-%m', date) = strftime('%Y-%m', 'now', 'localtime')
             AND species = ? AND sex = ?
             AND occupied_quantity < total_quantity
             AND clinic_id = ?
@@ -647,6 +700,7 @@ function createAutomaticAppointment(user, animalInput, terms, clinicId) {
       : db.prepare(`
           SELECT * FROM slots
           WHERE active = 1 AND date >= date('now', 'localtime')
+            AND strftime('%Y-%m', date) = strftime('%Y-%m', 'now', 'localtime')
             AND species = ? AND sex = ?
             AND occupied_quantity < total_quantity
           ORDER BY date ASC, time ASC, id ASC

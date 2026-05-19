@@ -1292,6 +1292,16 @@ function ClinicsTab({ clinics, reload, auth }) {
     }
   }
 
+  async function removeHard(id) {
+    if (!confirm('Excluir esta clínica DEFINITIVAMENTE?\n\nTodas as vagas sem agendamentos ativos também serão excluídas. Esta ação não pode ser desfeita.')) return;
+    try {
+      await request(`/admin/clinics/${id}?permanent=true`, { method: 'DELETE' }, auth.token);
+      reload();
+    } catch (err) {
+      setError(err.message);
+    }
+  }
+
   return (
     <div className="admin-section">
       <form className="inline-form" onSubmit={save}>
@@ -1317,7 +1327,7 @@ function ClinicsTab({ clinics, reload, auth }) {
           clinic.neighborhood || '-',
           clinic.phone || '-',
           clinic.active ? 'Ativa' : 'Inativa',
-          <TableActions key={clinic.id} onEdit={() => edit(clinic)} onDelete={() => remove(clinic.id)} />
+          <TableActions key={clinic.id} onEdit={() => edit(clinic)} onDelete={() => remove(clinic.id)} onHardDelete={() => removeHard(clinic.id)} />
         ])}
       />
     </div>
@@ -1328,13 +1338,9 @@ function SlotsTab({ slots, clinics, reload, auth }) {
   const blank = { date: '', time: '09:00', species: 'gato', sex: 'femea', total_quantity: 1, clinic_id: '' };
   const [form, setForm] = useState(blank);
   const [editing, setEditing] = useState(null);
-  const [filters, setFilters] = useState({
-    clinic_id: '',
-    date: '',
-    type: '',
-    status: ''
-  });
+  const [filters, setFilters] = useState({ clinic_id: '', date: '', type: '', status: '' });
   const [error, setError] = useState('');
+  const [selectedIds, setSelectedIds] = useState(new Set());
 
   const clinicOptions = useMemo(() => clinics.filter((clinic) => clinic.active), [clinics]);
 
@@ -1350,6 +1356,33 @@ function SlotsTab({ slots, clinics, reload, auth }) {
       );
     });
   }, [slots, filters]);
+
+  const allSelected = filteredSlots.length > 0 && filteredSlots.every((s) => selectedIds.has(s.id));
+
+  function toggleSelected(id) {
+    setSelectedIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  }
+
+  function toggleSelectAll() {
+    if (allSelected) {
+      setSelectedIds((prev) => {
+        const next = new Set(prev);
+        filteredSlots.forEach((s) => next.delete(s.id));
+        return next;
+      });
+    } else {
+      setSelectedIds((prev) => {
+        const next = new Set(prev);
+        filteredSlots.forEach((s) => next.add(s.id));
+        return next;
+      });
+    }
+  }
 
   function edit(slot) {
     setEditing(slot.id);
@@ -1384,6 +1417,29 @@ function SlotsTab({ slots, clinics, reload, auth }) {
     if (!confirm('Desativar esta vaga?')) return;
     try {
       await request(`/admin/slots/${id}`, { method: 'DELETE' }, auth.token);
+      reload();
+    } catch (err) {
+      setError(err.message);
+    }
+  }
+
+  async function removeHard(id) {
+    if (!confirm('Excluir esta vaga DEFINITIVAMENTE?\n\nEsta ação não pode ser desfeita.')) return;
+    try {
+      await request(`/admin/slots/${id}?permanent=true`, { method: 'DELETE' }, auth.token);
+      reload();
+    } catch (err) {
+      setError(err.message);
+    }
+  }
+
+  async function renew() {
+    if (!selectedIds.size) return;
+    if (!confirm(`Renovar ${selectedIds.size} vaga(s) somando +1 mês na data?\n\nNovas vagas serão criadas com as mesmas configurações e data do mês seguinte.`)) return;
+    setError('');
+    try {
+      await request('/admin/slots/renew', { method: 'POST', body: { ids: [...selectedIds] } }, auth.token);
+      setSelectedIds(new Set());
       reload();
     } catch (err) {
       setError(err.message);
@@ -1454,9 +1510,22 @@ function SlotsTab({ slots, clinics, reload, auth }) {
         </button>
         <span className="filter-count">{filteredSlots.length} de {slots.length} vagas</span>
       </div>
+      <div className="slots-toolbar">
+        <button className="button ghost" type="button" onClick={toggleSelectAll}>
+          {allSelected ? 'Desmarcar Todas' : 'Selecionar Todas'}
+        </button>
+        <button className="button primary" type="button" onClick={renew} disabled={!selectedIds.size}>
+          <CalendarPlus size={18} />
+          Renovar Vagas{selectedIds.size > 0 ? ` (${selectedIds.size})` : ''}
+        </button>
+        {selectedIds.size > 0 && (
+          <span className="filter-count">{selectedIds.size} selecionada{selectedIds.size !== 1 ? 's' : ''}</span>
+        )}
+      </div>
       <DataTable
-        columns={['Data', 'Hora', 'Tipo', 'Clínica', 'Total', 'Ocupadas', 'Status', 'Ações']}
+        columns={['', 'Data', 'Hora', 'Tipo', 'Clínica', 'Total', 'Ocupadas', 'Status', 'Ações']}
         rows={filteredSlots.map((slot) => [
+          <input key={`chk-${slot.id}`} type="checkbox" checked={selectedIds.has(slot.id)} onChange={() => toggleSelected(slot.id)} />,
           formatDate(slot.date),
           slot.time,
           capitalize(slot.label),
@@ -1464,7 +1533,7 @@ function SlotsTab({ slots, clinics, reload, auth }) {
           slot.total_quantity,
           slot.occupied_quantity,
           slot.active ? 'Ativa' : 'Inativa',
-          <TableActions key={slot.id} onEdit={() => edit(slot)} onDelete={() => remove(slot.id)} />
+          <TableActions key={slot.id} onEdit={() => edit(slot)} onDelete={() => remove(slot.id)} onHardDelete={() => removeHard(slot.id)} />
         ])}
       />
     </div>
@@ -1800,7 +1869,7 @@ function DataTable({ columns, rows }) {
     <div className="table-wrap">
       <table>
         <thead>
-          <tr>{columns.map((column) => <th key={column}>{column}</th>)}</tr>
+          <tr>{columns.map((column, i) => <th key={i}>{column}</th>)}</tr>
         </thead>
         <tbody>
           {rows.map((row, rowIndex) => (
@@ -1814,11 +1883,14 @@ function DataTable({ columns, rows }) {
   );
 }
 
-function TableActions({ onEdit, onDelete }) {
+function TableActions({ onEdit, onDelete, onHardDelete }) {
   return (
     <div className="table-actions">
       <button className="icon-only" type="button" onClick={onEdit} title="Editar"><Edit3 size={18} /></button>
       <button className="icon-only danger" type="button" onClick={onDelete} title="Desativar"><Trash2 size={18} /></button>
+      {onHardDelete && (
+        <button className="icon-only danger" type="button" onClick={onHardDelete} title="Excluir definitivamente"><XCircle size={18} /></button>
+      )}
     </div>
   );
 }

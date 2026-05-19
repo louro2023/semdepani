@@ -856,6 +856,14 @@ select:focus,
   font-weight: 800;
 }
 
+.slots-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 0;
+  flex-wrap: wrap;
+}
+
 .table-wrap {
   width: 100%;
   overflow-x: auto;
