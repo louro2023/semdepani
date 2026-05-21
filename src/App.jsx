@@ -1724,6 +1724,45 @@ function UserManager({ title, users, clinics, reload, auth, defaultRole }) {
   const [error, setError] = useState('');
   const [importResult, setImportResult] = useState(null);
   const [importing, setImporting] = useState(false);
+  const [selectedIds, setSelectedIds] = useState(new Set());
+
+  function toggleSelected(id) {
+    setSelectedIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  }
+
+  function toggleSelectAll() {
+    if (allSelected) {
+      setSelectedIds((prev) => {
+        const next = new Set(prev);
+        filteredUsers.forEach((u) => next.delete(u.id));
+        return next;
+      });
+    } else {
+      setSelectedIds((prev) => {
+        const next = new Set(prev);
+        filteredUsers.forEach((u) => next.add(u.id));
+        return next;
+      });
+    }
+  }
+
+  async function removeBulk() {
+    if (!selectedIds.size) return;
+    if (!confirm(`Excluir ${selectedIds.size} usuário(s) DEFINITIVAMENTE?\n\nUsuários com agendamentos ativos serão ignorados. Esta ação não pode ser desfeita.`)) return;
+    setError('');
+    const results = await Promise.allSettled(
+      [...selectedIds].map((id) => request(`/admin/users/${id}?permanent=true`, { method: 'DELETE' }, auth.token))
+    );
+    const failed = results.filter((r) => r.status === 'rejected');
+    if (failed.length) setError(`${failed.length} usuário(s) não puderam ser excluídos (possuem agendamentos ativos).`);
+    setSelectedIds(new Set());
+    reload();
+  }
 
   async function importCsv(event) {
     const file = event.target.files?.[0];
@@ -1766,6 +1805,8 @@ function UserManager({ title, users, clinics, reload, auth, defaultRole }) {
       );
     });
   }, [users, filters]);
+
+  const allSelected = filteredUsers.length > 0 && filteredUsers.every((u) => selectedIds.has(u.id));
 
   function edit(user) {
     setEditing(user.id);
@@ -1912,9 +1953,22 @@ function UserManager({ title, users, clinics, reload, auth, defaultRole }) {
         </button>
         <span className="filter-count">{filteredUsers.length} de {users.length} usuários</span>
       </div>
+      <div className="slots-toolbar">
+        <button className="button ghost" type="button" onClick={toggleSelectAll}>
+          {allSelected ? 'Desmarcar Todos' : 'Selecionar Todos'}
+        </button>
+        <button className="button danger" type="button" onClick={removeBulk} disabled={!selectedIds.size}>
+          <Trash2 size={18} />
+          Excluir Selecionados{selectedIds.size > 0 ? ` (${selectedIds.size})` : ''}
+        </button>
+        {selectedIds.size > 0 && (
+          <span className="filter-count">{selectedIds.size} selecionado{selectedIds.size !== 1 ? 's' : ''}</span>
+        )}
+      </div>
       <DataTable
-        columns={['Nome', 'CPF', 'Telefone', 'Tipo', 'Clínica', 'Status', 'Ações']}
+        columns={['', 'Nome', 'CPF', 'Telefone', 'Tipo', 'Clínica', 'Status', 'Ações']}
         rows={filteredUsers.map((user) => [
+          <input key={`chk-${user.id}`} type="checkbox" checked={selectedIds.has(user.id)} onChange={() => toggleSelected(user.id)} />,
           user.name,
           maskCpf(user.cpf),
           user.phone || '-',
