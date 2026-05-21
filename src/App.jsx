@@ -628,7 +628,7 @@ function LoginView({ title, expectedRole, destinationView, setAuth, setView }) {
         ) : expectedRole === 'clinica' ? (
           <p className="muted">Acesso restrito para clínicas cadastradas pela administração.</p>
         ) : (
-          <p className="muted">Acesso inicial do administrador: CPF 00000000000 e senha admin123.</p>
+          <p className="muted">Área restrita. Entre em contato com a administração para obter acesso.</p>
         )}
       </form>
     </section>
