@@ -58,7 +58,18 @@ const docUpload = multer({
 const app = express();
 app.use(helmet({
   crossOriginResourcePolicy: { policy: 'same-origin' },
-  contentSecurityPolicy: false
+  contentSecurityPolicy: {
+    directives: {
+      defaultSrc: ["'self'"],
+      scriptSrc: ["'self'"],
+      styleSrc: ["'self'", "'unsafe-inline'"],
+      imgSrc: ["'self'", "data:"],
+      connectSrc: ["'self'"],
+      fontSrc: ["'self'"],
+      objectSrc: ["'none'"],
+      frameAncestors: ["'none'"],
+    }
+  }
 }));
 app.use(express.json({ limit: '2mb' }));
 
@@ -171,6 +182,13 @@ app.post('/api/me/documents', requireAuth, (req, res, next) => {
 }, (req, res) => {
   try {
     const files = req.files || {};
+    for (const field of ['doc_residencia', 'doc_cpf', 'doc_identidade']) {
+      const uploaded = files[field]?.[0];
+      if (uploaded && !checkFileMagicBytes(uploaded.path)) {
+        try { fs.unlinkSync(uploaded.path); } catch (_e) { /* ignore */ }
+        return res.status(400).json({ message: `Arquivo ${field} inválido. Envie um PDF, JPG ou PNG real.` });
+      }
+    }
     const updates = [];
     const values = [];
     ['doc_residencia', 'doc_cpf', 'doc_identidade'].forEach((field) => {
@@ -587,7 +605,7 @@ app.get(/.*/, (_req, res) => {
   });
 });
 
-const LISTEN_HOST = process.env.LISTEN_HOST || '0.0.0.0';
+const LISTEN_HOST = process.env.LISTEN_HOST || '127.0.0.1';
 app.listen(PORT, LISTEN_HOST, () => {
   console.log(`API em http://${LISTEN_HOST}:${PORT}`);
 });
@@ -644,7 +662,7 @@ function parseUser(input = {}, role) {
     neighborhood: normalizeText(input.neighborhood)
   };
   if (!data.name) throw httpError(400, 'Informe o nome completo.');
-  if (data.cpf.length !== 11) throw httpError(400, 'Informe um CPF com 11 dígitos.');
+  if (!isValidCpf(data.cpf)) throw httpError(400, 'CPF inválido. Verifique os dígitos informados.');
   if (!data.address) throw httpError(400, 'Informe o endereço.');
   if (!data.neighborhood && role !== 'protetor') throw httpError(400, 'Informe o bairro.');
   if (!data.phone) throw httpError(400, 'Informe o telefone.');
@@ -944,7 +962,7 @@ function upsertAdminUser(input = {}) {
     pre_registered: role === 'protetor' ? 1 : input.pre_registered ? 1 : 0
   };
   if (!data.name) throw httpError(400, 'Informe o nome.');
-  if (data.cpf.length !== 11) throw httpError(400, 'CPF deve ter 11 dígitos.');
+  if (!isValidCpf(data.cpf)) throw httpError(400, 'CPF inválido. Verifique os dígitos informados.');
   if (role === 'clinica' && !clinic) throw httpError(400, 'Selecione uma clínica cadastrada para este usuário.');
   const passwordHash = input.password ? bcrypt.hashSync(String(input.password), 12) : null;
   if (!id && role === 'clinica' && !passwordHash) throw httpError(400, 'Informe uma senha para o usuário da clínica.');
@@ -1056,6 +1074,37 @@ function asCountMap(rows, key = 'status') {
     acc[row[key]] = Number(row.total);
     return acc;
   }, {});
+}
+
+function isValidCpf(cpf) {
+  const c = String(cpf).replace(/\D/g, '');
+  if (c.length !== 11 || /^(\d)\1+$/.test(c)) return false;
+  let sum = 0;
+  for (let i = 0; i < 9; i++) sum += Number(c[i]) * (10 - i);
+  let d1 = 11 - (sum % 11);
+  if (d1 >= 10) d1 = 0;
+  sum = 0;
+  for (let i = 0; i < 10; i++) sum += Number(c[i]) * (11 - i);
+  let d2 = 11 - (sum % 11);
+  if (d2 >= 10) d2 = 0;
+  return Number(c[9]) === d1 && Number(c[10]) === d2;
+}
+
+function checkFileMagicBytes(filePath) {
+  const buf = Buffer.alloc(12);
+  const fd = fs.openSync(filePath, 'r');
+  fs.readSync(fd, buf, 0, 12, 0);
+  fs.closeSync(fd);
+  // JPEG: FF D8 FF
+  if (buf[0] === 0xFF && buf[1] === 0xD8 && buf[2] === 0xFF) return true;
+  // PNG: 89 50 4E 47
+  if (buf[0] === 0x89 && buf[1] === 0x50 && buf[2] === 0x4E && buf[3] === 0x47) return true;
+  // PDF: %PDF
+  if (buf[0] === 0x25 && buf[1] === 0x50 && buf[2] === 0x44 && buf[3] === 0x46) return true;
+  // WebP: RIFF....WEBP
+  if (buf[0] === 0x52 && buf[1] === 0x49 && buf[2] === 0x46 && buf[3] === 0x46 &&
+      buf[8] === 0x57 && buf[9] === 0x45 && buf[10] === 0x42 && buf[11] === 0x50) return true;
+  return false;
 }
 
 function httpError(status, message) {

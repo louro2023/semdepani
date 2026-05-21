@@ -1,3 +1,4 @@
+import crypto from 'node:crypto';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -173,11 +174,11 @@ function migrateUsersForClinicRole() {
 
 function seedAdmin() {
   const isProd = process.env.NODE_ENV === 'production';
+  if (isProd && (!process.env.ADMIN_CPF || !process.env.ADMIN_PASSWORD)) {
+    throw new Error('[SEGURANÇA] ADMIN_CPF e ADMIN_PASSWORD são obrigatórios em produção. Configure o arquivo .env antes de iniciar.');
+  }
   const adminCpf = normalizeCpf(process.env.ADMIN_CPF || '00000000000');
   const password = process.env.ADMIN_PASSWORD || 'admin123';
-  if (isProd && (!process.env.ADMIN_CPF || !process.env.ADMIN_PASSWORD)) {
-    console.warn('[SEGURANÇA] ADMIN_CPF e/ou ADMIN_PASSWORD não definidos. Use credenciais padrão para acessar e troque imediatamente.');
-  }
   const hash = bcrypt.hashSync(password, 12);
   db.prepare(`
     INSERT INTO users (name, cpf, password_hash, phone, address, neighborhood, role, city_confirmed, adult_confirmed, active)
@@ -352,7 +353,7 @@ function importProtectorsFromText(rawText) {
 export function createProtocol() {
   const now = new Date();
   const ymd = toDateString(now).replace(/-/g, '');
-  const random = Math.random().toString(36).slice(2, 7).toUpperCase();
+  const random = crypto.randomBytes(3).toString('hex').toUpperCase();
   return `NI-${ymd}-${random}`;
 }
 
