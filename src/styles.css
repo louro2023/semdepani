@@ -880,6 +880,40 @@ select:focus,
   flex-wrap: wrap;
 }
 
+.import-bar {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 0;
+  flex-wrap: wrap;
+  border-bottom: 1px solid var(--line);
+  margin-bottom: 8px;
+}
+
+.import-result {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  background: #f0faf4;
+  border: 1px solid #a8d8c0;
+  border-radius: 6px;
+  padding: 6px 12px;
+  font-size: 0.875rem;
+  flex-wrap: wrap;
+}
+
+.import-result details summary {
+  cursor: pointer;
+  color: var(--primary);
+}
+
+.import-result ul {
+  margin: 4px 0 0 16px;
+  padding: 0;
+  font-size: 0.8rem;
+  color: var(--danger);
+}
+
 .table-wrap {
   width: 100%;
   overflow-x: auto;

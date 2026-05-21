@@ -1,6 +1,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import crypto from 'node:crypto';
 import bcrypt from 'bcryptjs';
 import express from 'express';
 import helmet from 'helmet';
@@ -52,6 +53,16 @@ const docUpload = multer({
     const allowed = ['.pdf', '.jpg', '.jpeg', '.png', '.webp'];
     if (allowed.includes(path.extname(file.originalname).toLowerCase())) cb(null, true);
     else cb(new Error('Tipo não permitido. Use PDF, JPG ou PNG.'));
+  }
+});
+
+const csvUpload = multer({
+  storage: multer.memoryStorage(),
+  limits: { fileSize: 2 * 1024 * 1024 },
+  fileFilter(_req, file, cb) {
+    const ext = path.extname(file.originalname).toLowerCase();
+    if (['.csv', '.txt'].includes(ext)) cb(null, true);
+    else cb(new Error('Envie um arquivo CSV. No Excel: Arquivo → Salvar Como → CSV UTF-8.'));
   }
 });
 
@@ -586,6 +597,61 @@ app.delete('/api/admin/users/:id', requireAdmin, (req, res) => {
   }
 });
 
+app.post('/api/admin/users/import', requireAdmin, (req, res, next) => {
+  csvUpload.single('file')(req, res, (err) => {
+    if (err) return res.status(400).json({ message: err.message });
+    next();
+  });
+}, (req, res) => {
+  try {
+    if (!req.file) throw httpError(400, 'Nenhum arquivo enviado.');
+    const rows = parseCsvBuffer(req.file.buffer);
+    if (!rows.length) throw httpError(400, 'Planilha vazia ou sem linhas válidas após o cabeçalho.');
+
+    const insert = db.prepare(`
+      INSERT INTO users (name, cpf, password_hash, phone, address, neighborhood, email, role,
+        city_confirmed, adult_confirmed, pre_registered, active)
+      VALUES (?, ?, ?, ?, ?, ?, ?, 'tutor', 1, 1, 0, 1)
+      ON CONFLICT(cpf) DO NOTHING
+    `);
+
+    let imported = 0;
+    const errors = [];
+
+    db.exec('BEGIN IMMEDIATE');
+    try {
+      for (const [index, row] of rows.entries()) {
+        const cpf = normalizeCpf(row.cpf);
+        if (!isValidCpf(cpf)) {
+          errors.push(`Linha ${index + 2}: CPF "${row.cpf}" inválido — ignorado.`);
+          continue;
+        }
+        if (!row.name) {
+          errors.push(`Linha ${index + 2}: nome ausente — ignorado.`);
+          continue;
+        }
+        const password = row.password || crypto.randomBytes(4).toString('hex');
+        const hash = bcrypt.hashSync(password, 12);
+        const result = insert.run(
+          normalizeText(row.name), cpf, hash,
+          normalizePhone(row.phone || ''), normalizeText(row.address || ''),
+          normalizeText(row.neighborhood || ''), normalizeText(row.email || '')
+        );
+        if (result.changes > 0) imported += 1;
+        else errors.push(`Linha ${index + 2}: CPF ${cpf} já cadastrado — ignorado.`);
+      }
+      db.exec('COMMIT');
+    } catch (err) {
+      db.exec('ROLLBACK');
+      throw err;
+    }
+
+    res.json({ imported, skipped: rows.length - imported, errors });
+  } catch (error) {
+    sendError(res, error);
+  }
+});
+
 app.get('/api/admin/protectors', requireAdmin, (_req, res) => {
   const protectors = db.prepare(`
     SELECT id, name, cpf, phone, address, neighborhood, pre_registered, active, created_at,
@@ -1076,6 +1142,53 @@ function asCountMap(rows, key = 'status') {
     acc[row[key]] = Number(row.total);
     return acc;
   }, {});
+}
+
+function parseCsvBuffer(buffer) {
+  const text = buffer.toString('utf8').replace(/^﻿/, '').replace(/\r\n/g, '\n').replace(/\r/g, '\n');
+  const lines = text.split('\n').map((l) => l.trim()).filter(Boolean);
+  if (lines.length < 2) return [];
+
+  const delimiters = [';', ',', '\t'];
+  const delimiter = delimiters.find((d) => lines[0].includes(d)) || ',';
+
+  function splitRow(line) {
+    const result = [];
+    let current = '';
+    let inQuotes = false;
+    for (const ch of line) {
+      if (ch === '"') { inQuotes = !inQuotes; }
+      else if (ch === delimiter && !inQuotes) { result.push(current.trim()); current = ''; }
+      else current += ch;
+    }
+    result.push(current.trim());
+    return result;
+  }
+
+  const FIELD_MAP = {
+    name: ['PROTETOR(A)', 'PROTETOR', 'NOME', 'NAME'],
+    address: ['ENDEREÇO', 'ENDERECO', 'ADDRESS'],
+    phone: ['CONTATO', 'TELEFONE', 'PHONE', 'CEL'],
+    cpf: ['CPF'],
+    password: ['SENHA', 'PASSWORD', 'PASS'],
+    email: ['EMAIL', 'E-MAIL', 'MAIL']
+  };
+
+  const rawHeaders = splitRow(lines[0]).map((h) => h.toUpperCase().replace(/['"]/g, '').trim());
+  const colIndex = {};
+  for (const [field, variants] of Object.entries(FIELD_MAP)) {
+    const idx = rawHeaders.findIndex((h) => variants.includes(h));
+    if (idx !== -1) colIndex[field] = idx;
+  }
+
+  return lines.slice(1).map((line) => {
+    const cells = splitRow(line);
+    const row = {};
+    for (const [field, idx] of Object.entries(colIndex)) {
+      row[field] = (cells[idx] || '').replace(/^"|"$/g, '').trim();
+    }
+    return row;
+  }).filter((row) => row.cpf || row.name);
 }
 
 function isValidCpf(cpf) {

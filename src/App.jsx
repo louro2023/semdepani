@@ -1722,6 +1722,34 @@ function UserManager({ title, users, clinics, reload, auth, defaultRole }) {
     status: ''
   });
   const [error, setError] = useState('');
+  const [importResult, setImportResult] = useState(null);
+  const [importing, setImporting] = useState(false);
+
+  async function importCsv(event) {
+    const file = event.target.files?.[0];
+    event.target.value = '';
+    if (!file) return;
+    setImporting(true);
+    setImportResult(null);
+    setError('');
+    try {
+      const formData = new FormData();
+      formData.append('file', file);
+      const response = await fetch('/api/admin/users/import', {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${auth.token}` },
+        body: formData
+      });
+      const data = await response.json();
+      if (!response.ok) throw new Error(data.message || 'Erro ao importar.');
+      setImportResult(data);
+      reload();
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setImporting(false);
+    }
+  }
 
   const filteredUsers = useMemo(() => {
     const search = normalizeSearch(filters.search);
@@ -1827,6 +1855,29 @@ function UserManager({ title, users, clinics, reload, auth, defaultRole }) {
         </label>
         <button className="button primary" type="submit"><UserPlus size={18} /> {editing ? 'Salvar' : 'Cadastrar'}</button>
       </form>
+      <div className="import-bar">
+        <label className={`button ghost${importing ? ' disabled' : ''}`} style={{ cursor: importing ? 'wait' : 'pointer' }}>
+          <Download size={18} />
+          {importing ? 'Importando…' : 'Importar planilha CSV'}
+          <input type="file" accept=".csv,.txt" style={{ display: 'none' }} onChange={importCsv} disabled={importing} />
+        </label>
+        <span className="muted" style={{ fontSize: '0.8rem' }}>
+          Colunas esperadas: PROTETOR(A), ENDEREÇO, CONTATO, CPF, SENHA, EMAIL
+        </span>
+        {importResult && (
+          <div className="import-result">
+            <strong>{importResult.imported} importado(s)</strong>
+            {importResult.skipped > 0 && <span> · {importResult.skipped} ignorado(s)</span>}
+            {importResult.errors?.length > 0 && (
+              <details>
+                <summary>{importResult.errors.length} aviso(s)</summary>
+                <ul>{importResult.errors.map((e, i) => <li key={i}>{e}</li>)}</ul>
+              </details>
+            )}
+          </div>
+        )}
+        {error ? <InlineAlert message={error} /> : null}
+      </div>
       <div className="filter-bar" aria-label="Filtros de usuários">
         <TextField label="Nome, CPF ou telefone" value={filters.search} onChange={(value) => setFilters({ ...filters, search: value })} />
         <label className="field">

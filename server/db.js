@@ -115,6 +115,7 @@ export function initSchema() {
   ensureColumn('users', 'doc_residencia', 'TEXT');
   ensureColumn('users', 'doc_cpf', 'TEXT');
   ensureColumn('users', 'doc_identidade', 'TEXT');
+  ensureColumn('users', 'email', 'TEXT');
 }
 
 export async function seedDatabase() {
