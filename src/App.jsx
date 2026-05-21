@@ -1770,6 +1770,26 @@ function UserManager({ title, users, clinics, reload, auth, defaultRole }) {
     }
   }
 
+  async function remove(id) {
+    if (!confirm('Desativar este usuário?')) return;
+    try {
+      await request(`/admin/users/${id}`, { method: 'DELETE' }, auth.token);
+      reload();
+    } catch (err) {
+      setError(err.message);
+    }
+  }
+
+  async function removeHard(id) {
+    if (!confirm('Excluir este usuário DEFINITIVAMENTE?\n\nTodos os animais e agendamentos cancelados vinculados também serão excluídos. Esta ação não pode ser desfeita.')) return;
+    try {
+      await request(`/admin/users/${id}?permanent=true`, { method: 'DELETE' }, auth.token);
+      reload();
+    } catch (err) {
+      setError(err.message);
+    }
+  }
+
   return (
     <div className="admin-section">
       <h3>{title}</h3>
@@ -1842,7 +1862,7 @@ function UserManager({ title, users, clinics, reload, auth, defaultRole }) {
         <span className="filter-count">{filteredUsers.length} de {users.length} usuários</span>
       </div>
       <DataTable
-        columns={['Nome', 'CPF', 'Telefone', 'Tipo', 'Clínica', 'Status', 'Ação']}
+        columns={['Nome', 'CPF', 'Telefone', 'Tipo', 'Clínica', 'Status', 'Ações']}
         rows={filteredUsers.map((user) => [
           user.name,
           maskCpf(user.cpf),
@@ -1850,9 +1870,7 @@ function UserManager({ title, users, clinics, reload, auth, defaultRole }) {
           user.role,
           user.clinic_name || '-',
           user.active ? 'Ativo' : 'Inativo',
-          <button key={user.id} className="icon-only" type="button" onClick={() => edit(user)} title="Editar">
-            <Edit3 size={18} />
-          </button>
+          <TableActions key={user.id} onEdit={() => edit(user)} onDelete={() => remove(user.id)} onHardDelete={() => removeHard(user.id)} />
         ])}
       />
     </div>

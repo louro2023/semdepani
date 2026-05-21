@@ -541,6 +541,27 @@ app.put('/api/admin/users/:id', requireAdmin, (req, res) => {
   }
 });
 
+app.delete('/api/admin/users/:id', requireAdmin, (req, res) => {
+  try {
+    const id = Number(req.params.id);
+    if (id === req.user.id) throw httpError(400, 'Não é possível excluir o próprio usuário.');
+    const current = db.prepare('SELECT * FROM users WHERE id = ?').get(id);
+    if (!current) throw httpError(404, 'Usuário não encontrado.');
+    if (req.query.permanent === 'true') {
+      const activeAppointments = db.prepare(
+        `SELECT COUNT(*) AS total FROM appointments WHERE user_id = ? AND status NOT IN ('cancelado')`
+      ).get(id).total;
+      if (activeAppointments > 0) throw httpError(400, 'Não é possível excluir usuário com agendamentos ativos. Cancele os agendamentos primeiro.');
+      db.prepare('DELETE FROM users WHERE id = ?').run(id);
+      return res.json({ deleted: true });
+    }
+    db.prepare('UPDATE users SET active = 0, updated_at = CURRENT_TIMESTAMP WHERE id = ?').run(id);
+    res.json({ deactivated: true });
+  } catch (error) {
+    sendError(res, error);
+  }
+});
+
 app.get('/api/admin/protectors', requireAdmin, (_req, res) => {
   const protectors = db.prepare(`
     SELECT id, name, cpf, phone, address, neighborhood, pre_registered, active, created_at,
