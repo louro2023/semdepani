@@ -1254,6 +1254,26 @@ function ClinicsTab({ clinics, reload, auth }) {
   const [form, setForm] = useState(blank);
   const [editing, setEditing] = useState(null);
   const [error, setError] = useState('');
+  const [selectedIds, setSelectedIds] = useState(new Set());
+
+  const allSelected = clinics.length > 0 && clinics.every((c) => selectedIds.has(c.id));
+
+  function toggleSelected(id) {
+    setSelectedIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  }
+
+  function toggleSelectAll() {
+    if (allSelected) {
+      setSelectedIds(new Set());
+    } else {
+      setSelectedIds(new Set(clinics.map((c) => c.id)));
+    }
+  }
 
   function edit(clinic) {
     setEditing(clinic.id);
@@ -1302,6 +1322,19 @@ function ClinicsTab({ clinics, reload, auth }) {
     }
   }
 
+  async function removeBulk() {
+    if (!selectedIds.size) return;
+    if (!confirm(`Excluir ${selectedIds.size} clínica(s) DEFINITIVAMENTE?\n\nVagas sem agendamentos ativos também serão excluídas. Clínicas com agendamentos ativos serão ignoradas. Esta ação não pode ser desfeita.`)) return;
+    setError('');
+    const results = await Promise.allSettled(
+      [...selectedIds].map((id) => request(`/admin/clinics/${id}?permanent=true`, { method: 'DELETE' }, auth.token))
+    );
+    const failed = results.filter((r) => r.status === 'rejected');
+    if (failed.length) setError(`${failed.length} clínica(s) não puderam ser excluídas (possuem agendamentos ativos).`);
+    setSelectedIds(new Set());
+    reload();
+  }
+
   return (
     <div className="admin-section">
       <form className="inline-form" onSubmit={save}>
@@ -1319,9 +1352,22 @@ function ClinicsTab({ clinics, reload, auth }) {
         </label>
         <button className="button primary" type="submit"><Save size={18} /> {editing ? 'Salvar' : 'Cadastrar clínica'}</button>
       </form>
+      <div className="slots-toolbar">
+        <button className="button ghost" type="button" onClick={toggleSelectAll}>
+          {allSelected ? 'Desmarcar Todas' : 'Selecionar Todas'}
+        </button>
+        <button className="button danger" type="button" onClick={removeBulk} disabled={!selectedIds.size}>
+          <Trash2 size={18} />
+          Excluir Selecionadas{selectedIds.size > 0 ? ` (${selectedIds.size})` : ''}
+        </button>
+        {selectedIds.size > 0 && (
+          <span className="filter-count">{selectedIds.size} selecionada{selectedIds.size !== 1 ? 's' : ''}</span>
+        )}
+      </div>
       <DataTable
-        columns={['Clínica', 'Endereço', 'Bairro', 'Telefone', 'Status', 'Ações']}
+        columns={['', 'Clínica', 'Endereço', 'Bairro', 'Telefone', 'Status', 'Ações']}
         rows={clinics.map((clinic) => [
+          <input key={`chk-${clinic.id}`} type="checkbox" checked={selectedIds.has(clinic.id)} onChange={() => toggleSelected(clinic.id)} />,
           clinic.name,
           clinic.address,
           clinic.neighborhood || '-',
@@ -1446,6 +1492,19 @@ function SlotsTab({ slots, clinics, reload, auth }) {
     }
   }
 
+  async function removeBulk() {
+    if (!selectedIds.size) return;
+    if (!confirm(`Excluir ${selectedIds.size} vaga(s) DEFINITIVAMENTE?\n\nVagas com agendamentos ativos serão ignoradas. Esta ação não pode ser desfeita.`)) return;
+    setError('');
+    const results = await Promise.allSettled(
+      [...selectedIds].map((id) => request(`/admin/slots/${id}?permanent=true`, { method: 'DELETE' }, auth.token))
+    );
+    const failed = results.filter((r) => r.status === 'rejected');
+    if (failed.length) setError(`${failed.length} vaga(s) não puderam ser excluídas (possuem agendamentos ativos).`);
+    setSelectedIds(new Set());
+    reload();
+  }
+
   return (
     <div className="admin-section">
       <form className="inline-form" onSubmit={save}>
@@ -1517,6 +1576,10 @@ function SlotsTab({ slots, clinics, reload, auth }) {
         <button className="button primary" type="button" onClick={renew} disabled={!selectedIds.size}>
           <CalendarPlus size={18} />
           Renovar Vagas{selectedIds.size > 0 ? ` (${selectedIds.size})` : ''}
+        </button>
+        <button className="button danger" type="button" onClick={removeBulk} disabled={!selectedIds.size}>
+          <Trash2 size={18} />
+          Excluir Selecionadas{selectedIds.size > 0 ? ` (${selectedIds.size})` : ''}
         </button>
         {selectedIds.size > 0 && (
           <span className="filter-count">{selectedIds.size} selecionada{selectedIds.size !== 1 ? 's' : ''}</span>

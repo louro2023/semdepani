@@ -473,8 +473,19 @@ app.delete('/api/admin/slots/:id', requireAdmin, (req, res) => {
     const current = getSlot(req.params.id);
     if (!current) throw httpError(404, 'Vaga não encontrada.');
     if (req.query.permanent === 'true') {
-      if (current.occupied_quantity > 0) throw httpError(400, 'Não é possível excluir vaga com agendamentos.');
-      db.prepare('DELETE FROM slots WHERE id = ?').run(req.params.id);
+      const activeAppointments = db.prepare(
+        `SELECT COUNT(*) AS total FROM appointments WHERE slot_id = ? AND status NOT IN ('cancelado')`
+      ).get(req.params.id).total;
+      if (activeAppointments > 0) throw httpError(400, 'Não é possível excluir vaga com agendamentos ativos.');
+      db.exec('BEGIN IMMEDIATE');
+      try {
+        db.prepare(`DELETE FROM appointments WHERE slot_id = ? AND status = 'cancelado'`).run(req.params.id);
+        db.prepare('DELETE FROM slots WHERE id = ?').run(req.params.id);
+        db.exec('COMMIT');
+      } catch (err) {
+        db.exec('ROLLBACK');
+        throw err;
+      }
       return res.json({ deleted: true });
     }
     db.prepare('UPDATE slots SET active = 0, updated_at = CURRENT_TIMESTAMP WHERE id = ?').run(req.params.id);
