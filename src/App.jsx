@@ -119,7 +119,7 @@ export default function App() {
     <div className="app-shell">
       <header className="topbar">
         <button className="brand-button" type="button" onClick={() => setView('home')} title="Início">
-          <span className="brand-mark"><PawPrint size={24} /></span>
+          <span className="brand-mark"><img src="/brasao.png" alt="Brasão Nova Iguaçu" className="brand-brasao" /></span>
           <span>
             <strong>Castração Animal</strong>
             <small>Nova Iguaçu</small>
@@ -187,6 +187,9 @@ export default function App() {
           )
         ) : null}
       </main>
+      <footer className="app-footer">
+        <p>© 2026 Secretaria Municipal de Defesa e Proteção dos Animais. Horário de Funcionamento: De 09h às 17h. Todos os direitos reservados.</p>
+      </footer>
     </div>
   );
 }
@@ -609,7 +612,7 @@ function LoginView({ title, expectedRole, destinationView, setAuth, setView }) {
     <section className="auth-layout">
       <form className="auth-panel" onSubmit={login}>
         <div className="auth-brand">
-          <div className="brand-mark"><PawPrint size={24} /></div>
+          <div className="brand-mark"><img src="/brasao.png" alt="Brasão Nova Iguaçu" className="brand-brasao" /></div>
         </div>
         <div className="section-title compact">
           <span className="eyebrow">Login</span>
