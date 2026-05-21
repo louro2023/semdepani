@@ -3,6 +3,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import crypto from 'node:crypto';
 import bcrypt from 'bcryptjs';
+import ExcelJS from 'exceljs';
 import express from 'express';
 import helmet from 'helmet';
 import jwt from 'jsonwebtoken';
@@ -58,11 +59,11 @@ const docUpload = multer({
 
 const csvUpload = multer({
   storage: multer.memoryStorage(),
-  limits: { fileSize: 2 * 1024 * 1024 },
+  limits: { fileSize: 5 * 1024 * 1024 },
   fileFilter(_req, file, cb) {
     const ext = path.extname(file.originalname).toLowerCase();
-    if (['.csv', '.txt'].includes(ext)) cb(null, true);
-    else cb(new Error('Envie um arquivo CSV. No Excel: Arquivo → Salvar Como → CSV UTF-8.'));
+    if (['.csv', '.txt', '.xlsx'].includes(ext)) cb(null, true);
+    else cb(new Error('Envie um arquivo Excel (.xlsx) ou CSV.'));
   }
 });
 
@@ -602,10 +603,13 @@ app.post('/api/admin/users/import', requireAdmin, (req, res, next) => {
     if (err) return res.status(400).json({ message: err.message });
     next();
   });
-}, (req, res) => {
+}, async (req, res) => {
   try {
     if (!req.file) throw httpError(400, 'Nenhum arquivo enviado.');
-    const rows = parseCsvBuffer(req.file.buffer);
+    const ext = path.extname(req.file.originalname).toLowerCase();
+    const rows = ext === '.xlsx'
+      ? await parseExcelBuffer(req.file.buffer)
+      : parseCsvBuffer(req.file.buffer);
     if (!rows.length) throw httpError(400, 'Planilha vazia ou sem linhas válidas após o cabeçalho.');
 
     const insert = db.prepare(`
@@ -1142,6 +1146,43 @@ function asCountMap(rows, key = 'status') {
     acc[row[key]] = Number(row.total);
     return acc;
   }, {});
+}
+
+async function parseExcelBuffer(buffer) {
+  const FIELD_MAP = {
+    name: ['PROTETOR(A)', 'PROTETOR', 'NOME', 'NAME'],
+    address: ['ENDEREÇO', 'ENDERECO', 'ADDRESS'],
+    phone: ['CONTATO', 'TELEFONE', 'PHONE', 'CEL'],
+    cpf: ['CPF'],
+    password: ['SENHA', 'PASSWORD', 'PASS'],
+    email: ['EMAIL', 'E-MAIL', 'MAIL']
+  };
+
+  const workbook = new ExcelJS.Workbook();
+  await workbook.xlsx.load(buffer);
+  const sheet = workbook.worksheets[0];
+  if (!sheet) return [];
+
+  const headerRow = sheet.getRow(1);
+  const colIndex = {};
+  headerRow.eachCell((cell, colNumber) => {
+    const header = String(cell.value || '').toUpperCase().trim();
+    for (const [field, variants] of Object.entries(FIELD_MAP)) {
+      if (variants.includes(header)) colIndex[field] = colNumber;
+    }
+  });
+
+  const rows = [];
+  sheet.eachRow((row, rowNumber) => {
+    if (rowNumber === 1) return;
+    const entry = {};
+    for (const [field, colNumber] of Object.entries(colIndex)) {
+      const cell = row.getCell(colNumber);
+      entry[field] = String(cell.value ?? '').trim();
+    }
+    if (entry.cpf || entry.name) rows.push(entry);
+  });
+  return rows;
 }
 
 function parseCsvBuffer(buffer) {

@@ -1858,11 +1858,11 @@ function UserManager({ title, users, clinics, reload, auth, defaultRole }) {
       <div className="import-bar">
         <label className={`button ghost${importing ? ' disabled' : ''}`} style={{ cursor: importing ? 'wait' : 'pointer' }}>
           <Download size={18} />
-          {importing ? 'Importando…' : 'Importar planilha CSV'}
-          <input type="file" accept=".csv,.txt" style={{ display: 'none' }} onChange={importCsv} disabled={importing} />
+          {importing ? 'Importando…' : 'Importar planilha Excel / CSV'}
+          <input type="file" accept=".xlsx,.csv,.txt" style={{ display: 'none' }} onChange={importCsv} disabled={importing} />
         </label>
         <span className="muted" style={{ fontSize: '0.8rem' }}>
-          Colunas esperadas: PROTETOR(A), ENDEREÇO, CONTATO, CPF, SENHA, EMAIL
+          Aceita .xlsx (Excel) e .csv · Colunas: PROTETOR(A), ENDEREÇO, CONTATO, CPF, SENHA, EMAIL
         </span>
         {importResult && (
           <div className="import-result">
