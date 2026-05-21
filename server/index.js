@@ -372,6 +372,10 @@ app.delete('/api/admin/clinics/:id', requireAdmin, (req, res) => {
       if (hasAppointments > 0) throw httpError(400, 'Não é possível excluir clínica com agendamentos ativos vinculados.');
       db.exec('BEGIN IMMEDIATE');
       try {
+        db.prepare(`
+          DELETE FROM appointments WHERE status = 'cancelado'
+            AND slot_id IN (SELECT id FROM slots WHERE clinic_id = ?)
+        `).run(req.params.id);
         db.prepare('DELETE FROM slots WHERE clinic_id = ?').run(req.params.id);
         db.prepare('DELETE FROM clinics WHERE id = ?').run(req.params.id);
         db.exec('COMMIT');
