@@ -199,8 +199,9 @@ function seedClinics() {
 }
 
 function seedSlots() {
-  const existing = db.prepare('SELECT COUNT(*) AS total FROM slots').get().total;
-  if (existing > 0) return;
+  const alreadySeeded = db.prepare(`SELECT value FROM settings WHERE key = 'slots_seeded'`).get();
+  if (alreadySeeded) return;
+  db.prepare(`INSERT OR IGNORE INTO settings (key, value) VALUES ('slots_seeded', '1')`).run();
 
   const insert = db.prepare(`
     INSERT OR IGNORE INTO slots (date, time, species, sex, total_quantity, occupied_quantity, clinic_id, clinic)
