@@ -615,7 +615,7 @@ app.post('/api/admin/users/import', requireAdmin, (req, res, next) => {
     const insert = db.prepare(`
       INSERT INTO users (name, cpf, password_hash, phone, address, neighborhood, email, role,
         city_confirmed, adult_confirmed, pre_registered, active)
-      VALUES (?, ?, ?, ?, ?, ?, ?, 'tutor', 1, 1, 0, 1)
+      VALUES (?, ?, ?, ?, ?, ?, ?, 'protetor', 1, 1, 1, 1)
       ON CONFLICT(cpf) DO NOTHING
     `);
 

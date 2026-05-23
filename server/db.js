@@ -16,6 +16,10 @@ fs.mkdirSync(dataDir, { recursive: true });
 
 export const db = new DatabaseSync(dbPath);
 
+db.exec('PRAGMA journal_mode = WAL');
+db.exec('PRAGMA synchronous = NORMAL');
+db.exec('PRAGMA busy_timeout = 5000');
+
 export function normalizeCpf(cpf = '') {
   return String(cpf).replace(/\D/g, '');
 }
