@@ -10,10 +10,12 @@ Sistema web de cadastro e agendamento automático de castração animal gratuita
 |--------|------|
 | Frontend | React 19 + Vite 6, CSS puro (`src/styles.css`) |
 | Backend | Node.js (ESM), Express 5, `node:sqlite` (built-in) |
-| BD | SQLite em `data/castracao.sqlite` |
+| BD | SQLite em `data/castracao.sqlite` (WAL mode) |
 | Auth | JWT (`jsonwebtoken`) + bcrypt |
+| Email | nodemailer — confirmação de inscrição via SMTP |
 | Upload | Multer (documentos físicos — endpoint ainda existe mas UI removida) |
 | Icons | Lucide React |
+| Env | dotenv (`import 'dotenv/config'` no topo de `server/index.js`) |
 
 ---
 
@@ -56,7 +58,8 @@ scripts/
 |-------|------|-------|
 | role | TEXT | `admin` / `tutor` / `protetor` / `clinica` |
 | clinic_id | INT FK | vincula usuário `clinica` a uma clínica |
-| pre_registered | INT | 1 = protetor importado do DOCX |
+| pre_registered | INT | 1 = protetor importado do DOCX/planilha |
+| email | TEXT | opcional; usado para envio de confirmação de inscrição |
 | doc_residencia / doc_cpf / doc_identidade | TEXT | filename no disco |
 
 ### `clinics` — nome, endereço, bairro, telefone, active
@@ -111,11 +114,15 @@ scripts/
 
 | Etapa | Conteúdo |
 |-------|----------|
-| 1 — Dados do tutor | Nome, CPF, endereço, bairro, telefone, senha, checkbox cidade/adulto |
+| 1 — Dados do tutor | Nome, CPF, endereço, bairro, telefone, **e-mail** (opcional), senha, checkbox cidade/adulto |
 | 2 — Termos e regras | Lista completa de requisitos + aviso obrigatório de documentos físicos |
 | 3 — Dados do animal | Espécie (gato/cão), sexo, nome, raça, idade aproximada |
 | 4 — Escolher clínica | Busca `clinics/available` e lista botões de seleção; horário é automático |
 | 5 — Confirmação | Revisão: perfil, animal, clínica → botão "Confirmar inscrição" |
+
+**Pós-inscrição**: redireciona para home **sem logar** o usuário. Aviso de sucesso exibido 6s.
+
+**Confirmação por e-mail**: se e-mail preenchido e `SMTP_HOST` configurado, envia e-mail HTML com protocolo, animal, data, clínica e lembrete de documentos. Falha de SMTP não bloqueia inscrição (try/catch assíncrono após resposta HTTP).
 
 **Documentos**: upload foi **removido**. UI exibe aviso laranja em ambos wizard (step 2) e dashboard: identidade + CPF + comprovante de residência devem ser levados **em original** ao posto.
 
@@ -160,6 +167,9 @@ scripts/
 
 - Admin CPF: `00000000000` / senha: `admin123`
 - Env vars de produção: `JWT_SECRET`, `ADMIN_CPF`, `ADMIN_PASSWORD`, `PORT` (default 4000), `DB_PATH`, `LISTEN_HOST`, `SEED_DOCS_DIR`
+- Env vars de e-mail (opcionais): `SMTP_HOST`, `SMTP_PORT`, `SMTP_USER`, `SMTP_PASS`, `SMTP_FROM`
+  - Porta 465 ativa SSL automático (`secure: true`)
+  - Deixar `SMTP_HOST` em branco desativa envio de e-mails completamente
 
 ---
 
@@ -179,7 +189,7 @@ scripts/
 - **Clínicas** — CRUD de clínicas; desativar bloqueia se houver vagas ativas
 - **Vagas** — CRUD de slots; não altera species/sex se já tem agendamentos
 - **Agendamentos** — lista geral; mudar status realizado/não_realizado/cancelado
-- **Usuários** — CRUD completo; criar usuário `clinica` vincula ao clinic_id
+- **Usuários** — CRUD completo; criar usuário `clinica` vincula ao clinic_id; filtros de busca (nome/CPF/telefone, tipo, clínica, status); **paginação client-side** (20 por página); importação de planilha Excel/CSV
 - **Protetores** — lista de protetores com status de senha definida
 
 ---
@@ -207,8 +217,20 @@ scripts/
 ## Observações importantes
 
 - `db.js` usa `node:sqlite` (nativo Node 22+) — sem dependência `better-sqlite3`
+- SQLite configurado com WAL mode + `synchronous=NORMAL` + `busy_timeout=5000` para melhor concorrência
 - Transações em `createAutomaticAppointment` usam `BEGIN IMMEDIATE` para evitar race condition
 - Mudança de status cancela/restaura `occupied_quantity` atomicamente
 - Slots têm coluna `clinic` (texto legado) e `clinic_id` (FK); ambos mantidos por compatibilidade
 - `migrateSlotClinics()` sincroniza slots antigos sem `clinic_id`
 - Upload de docs ainda tem endpoint (`POST /api/me/documents`) mas a UI foi removida; arquivos antigos ainda servidos via `GET /api/documents/:userId/:type`
+- Importação de planilha (`/api/admin/users/import`) cria usuários com `role='protetor'` e `pre_registered=1`
+- Home redesenhada com layout editorial: classes `ed-*`, fontes Fraunces (serif display) + DM Sans, painel de vagas navy, acentos laranja
+
+## Deploy em produção
+
+```bash
+git pull
+npm install          # se package.json mudou
+npm run build        # sempre que App.jsx ou styles.css mudarem
+pm2 restart all
+```
