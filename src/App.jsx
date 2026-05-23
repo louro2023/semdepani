@@ -31,6 +31,7 @@ const emptyUser = {
   address: '',
   neighborhood: '',
   phone: '',
+  email: '',
   password: '',
   cityAdultConfirmed: false
 };
@@ -148,9 +149,10 @@ export default function App() {
             auth={auth}
             setAuth={setAuthState}
             onDone={() => {
-              setNotice('Inscrição registrada com agendamento automático.');
+              setView('home');
+              setNotice('Inscrição registrada com sucesso! Verifique seu e-mail para a confirmação.');
               loadAvailability();
-              setTimeout(() => setNotice(''), 4000);
+              setTimeout(() => setNotice(''), 6000);
             }}
           />
         ) : null}
@@ -206,82 +208,91 @@ function HomeView({ availability, auth, setView }) {
 
   return (
     <div className="home-layout">
-      <section className="home-grid">
-        <div className="hero-panel">
-          <span className="eyebrow">Programa municipal · Nova Iguaçu</span>
-          <h1>Castração animal gratuita para sua família</h1>
-          <p>
-            Cadastre tutor e animal, confirme os requisitos e receba automaticamente data e horário compatíveis com as vagas disponíveis.
+      <section className="ed-hero">
+        <div className="ed-hero-content">
+          <div className="ed-eyebrow">
+            <span>Programa Municipal · Nova Iguaçu</span>
+            <div className="ed-rule" />
+          </div>
+          <h1 className="ed-heading">
+            Castração<br />
+            <em>gratuita</em><br />
+            para o seu<br />
+            animal.
+          </h1>
+          <p className="ed-sub">
+            Cadastre-se, escolha uma clínica e receba agendamento automático — sem filas, sem burocracia.
           </p>
-          <div className="hero-actions">
+          <div className="ed-actions">
             <button className="button primary large" type="button" onClick={() => setView('inscricao')}>
               <CalendarPlus size={20} /> Fazer inscrição
             </button>
-            <div className="hero-secondary-actions">
-              <button className="button secondary large" type="button" onClick={() => setView('protetor')}>
-                <Shield size={20} /> Protetor
+            <div className="ed-secondary-actions">
+              <button className="button text" type="button" onClick={() => setView('protetor')}>
+                <Shield size={15} /> Protetor
               </button>
-              <button className="button secondary large" type="button" onClick={() => setView('clinica')}>
-                <ClipboardCheck size={20} /> Clínica
+              <span className="ed-dot" />
+              <button className="button text" type="button" onClick={() => setView('clinica')}>
+                <ClipboardCheck size={15} /> Clínica
+              </button>
+              <span className="ed-dot" />
+              <button className="button text" type="button" onClick={() => setView('admin')}>
+                <Building2 size={15} /> Administrativo
               </button>
             </div>
           </div>
-          <button className="admin-link" type="button" onClick={() => setView('admin')}>
-            <Building2 size={14} /> Área Administrativa
-          </button>
         </div>
 
-        <div className="status-panel">
-          <div className="status-panel-header">
-            <Calendar size={16} />
-            <span>Vagas disponíveis</span>
-          </div>
-          <div className="metric-row">
-            <Metric icon={Calendar} label="Vagas totais" value={totals.total} />
-            <Metric icon={CheckCircle2} label="Disponíveis" value={totals.available} />
-          </div>
-          <div className="availability-list">
+        <div className="ed-avail">
+          <div className="ed-avail-header">Vagas disponíveis</div>
+          <div className="ed-avail-big">{totals.available}</div>
+          <div className="ed-avail-label">vagas abertas agora</div>
+          <div className="ed-avail-divider" />
+          <div className="ed-avail-list">
             {availability.length ? availability.map((item) => (
-              <div className="availability-item" key={`${item.species}-${item.sex}`}>
+              <div className="ed-avail-item" key={`${item.species}-${item.sex}`}>
                 <span>{capitalize(item.label)}</span>
                 <strong>{item.available}</strong>
               </div>
-            )) : <p className="muted">Sem vagas futuras cadastradas no momento.</p>}
+            )) : <p className="ed-avail-empty">Sem vagas cadastradas no momento.</p>}
           </div>
           {auth ? (
-            <button className="button secondary full" type="button" onClick={() => setView('usuario')}>
-              <UserRound size={18} /> Ver meus agendamentos
+            <button className="ed-avail-btn" type="button" onClick={() => setView('usuario')}>
+              <UserRound size={16} /> Meus agendamentos
             </button>
           ) : null}
         </div>
       </section>
 
-      <section className="how-it-works">
-        <div className="how-header">
-          <span className="eyebrow">Como funciona</span>
-          <h2>Inscrição em 3 passos simples</h2>
-        </div>
-        <div className="how-steps">
-          <div className="how-step">
-            <div className="how-step-icon"><UserPlus size={26} /></div>
-            <div>
-              <strong>1. Cadastro</strong>
-              <p>Preencha os dados do tutor ou protetor e do animal a ser castrado.</p>
+      <section className="ed-steps">
+        <div className="ed-steps-label">Como funciona</div>
+        <div className="ed-steps-grid">
+          <div className="ed-step">
+            <div className="ed-step-top">
+              <div className="ed-step-icon"><UserPlus size={28} /></div>
+              <div className="ed-step-num">01</div>
             </div>
+            <div className="ed-step-rule" />
+            <strong>Cadastro</strong>
+            <p>Preencha os dados do tutor ou protetor e do animal a ser castrado.</p>
           </div>
-          <div className="how-step">
-            <div className="how-step-icon"><Building2 size={26} /></div>
-            <div>
-              <strong>2. Escolha a clínica</strong>
-              <p>Selecione a clínica de preferência. O horário é atribuído automaticamente conforme as vagas.</p>
+          <div className="ed-step">
+            <div className="ed-step-top">
+              <div className="ed-step-icon"><Building2 size={28} /></div>
+              <div className="ed-step-num">02</div>
             </div>
+            <div className="ed-step-rule" />
+            <strong>Escolha a clínica</strong>
+            <p>Selecione a clínica de preferência. O horário é atribuído automaticamente.</p>
           </div>
-          <div className="how-step">
-            <div className="how-step-icon"><CalendarPlus size={26} /></div>
-            <div>
-              <strong>3. Agendamento automático</strong>
-              <p>Receba na hora a data e horário disponíveis na clínica mais próxima.</p>
+          <div className="ed-step">
+            <div className="ed-step-top">
+              <div className="ed-step-icon"><CalendarPlus size={28} /></div>
+              <div className="ed-step-num">03</div>
             </div>
+            <div className="ed-step-rule" />
+            <strong>Agendamento automático</strong>
+            <p>Receba na hora a data e horário disponíveis na clínica escolhida.</p>
           </div>
         </div>
       </section>
@@ -357,7 +368,6 @@ function Wizard({ auth, setAuth, onDone }) {
         appointment = data.appointment;
       } else {
         const data = await request('/public/inscricao', { method: 'POST', body: { user, role, animal, terms, clinicId: selectedClinicId } });
-        if (data.token && data.user) { setAuth(data.token, data.user); }
         appointment = data.appointment;
       }
       setResult(appointment);
@@ -404,6 +414,7 @@ function Wizard({ auth, setAuth, onDone }) {
                       <TextField label="Endereço" value={user.address} onChange={(value) => updateUser('address', value)} required />
                       <TextField label="Bairro" value={user.neighborhood} onChange={(value) => updateUser('neighborhood', value)} required />
                       <TextField label="Telefone" value={user.phone} onChange={(value) => updateUser('phone', value)} required />
+                      <TextField label="E-mail" value={user.email} onChange={(value) => updateUser('email', value)} type="email" hint="Você receberá a confirmação da inscrição por e-mail" />
                       <TextField label="Senha de acesso" value={user.password} onChange={(value) => updateUser('password', value)} type="password" required />
                     </>
                   ) : (
@@ -2033,11 +2044,12 @@ function ResultPanel({ appointment }) {
   );
 }
 
-function TextField({ label, value, onChange, type = 'text', required = false }) {
+function TextField({ label, value, onChange, type = 'text', required = false, hint }) {
   return (
     <label className="field">
       <span>{label}{required ? ' *' : ''}</span>
       <input type={type} value={value} onChange={(event) => onChange(event.target.value)} required={required} />
+      {hint ? <small className="field-hint">{hint}</small> : null}
     </label>
   );
 }

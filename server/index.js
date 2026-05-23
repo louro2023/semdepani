@@ -1,3 +1,4 @@
+import 'dotenv/config';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -8,6 +9,7 @@ import express from 'express';
 import helmet from 'helmet';
 import jwt from 'jsonwebtoken';
 import multer from 'multer';
+import nodemailer from 'nodemailer';
 import rateLimit from 'express-rate-limit';
 import {
   createProtocol,
@@ -27,6 +29,15 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const rootDir = path.resolve(__dirname, '..');
 const uploadsDir = path.join(rootDir, 'data', 'uploads');
 fs.mkdirSync(uploadsDir, { recursive: true });
+
+const smtpTransporter = process.env.SMTP_HOST
+  ? nodemailer.createTransport({
+      host: process.env.SMTP_HOST,
+      port: Number(process.env.SMTP_PORT || 587),
+      secure: Number(process.env.SMTP_PORT) === 465,
+      auth: { user: process.env.SMTP_USER, pass: process.env.SMTP_PASS }
+    })
+  : null;
 const isDev = process.env.NODE_ENV !== 'production';
 const JWT_SECRET = process.env.JWT_SECRET || (isDev ? 'dev-secret-nova-iguacu-castracao' : null);
 if (!JWT_SECRET) throw new Error('JWT_SECRET env var obrigatório em produção.');
@@ -155,7 +166,7 @@ app.post('/api/auth/register', (req, res) => {
   }
 });
 
-app.post('/api/public/inscricao', (req, res) => {
+app.post('/api/public/inscricao', async (req, res) => {
   try {
     const { user, animal, terms, role = 'tutor', clinicId = null } = req.body;
     validateTerms(terms);
@@ -166,6 +177,8 @@ app.post('/api/public/inscricao', (req, res) => {
       user: publicUser(savedUser),
       appointment
     });
+    const emailAddr = db.prepare('SELECT email FROM users WHERE id = ?').get(savedUser.id)?.email;
+    sendConfirmationEmail(emailAddr, savedUser.name, appointment);
   } catch (error) {
     sendError(res, error);
   }
@@ -687,6 +700,62 @@ async function bootstrap() {
   await seedDatabase();
 }
 
+function formatDateBR(dateStr) {
+  const [y, m, d] = dateStr.split('-');
+  return `${d}/${m}/${y}`;
+}
+
+function speciesLabel(species, sex) {
+  const s = species === 'cao' ? 'Cão' : 'Gato';
+  const g = sex === 'femea' ? 'fêmea' : 'macho';
+  return `${s} ${g}`;
+}
+
+async function sendConfirmationEmail(toEmail, userName, appointment) {
+  if (!smtpTransporter || !toEmail) return;
+  const from = process.env.SMTP_FROM || process.env.SMTP_USER;
+  const subject = `✅ Inscrição confirmada — Protocolo ${appointment.protocol}`;
+  const html = `
+    <div style="font-family:sans-serif;max-width:560px;margin:0 auto;color:#111133">
+      <div style="background:#131953;padding:24px 32px;border-radius:12px 12px 0 0">
+        <p style="margin:0;color:#fff;font-size:13px;letter-spacing:0.08em;text-transform:uppercase;opacity:0.6">Programa Municipal · Nova Iguaçu</p>
+        <h1 style="margin:8px 0 0;color:#fff;font-size:22px">Castração Animal Gratuita</h1>
+      </div>
+      <div style="background:#fff;border:1px solid #e0e0ee;border-top:none;padding:32px;border-radius:0 0 12px 12px">
+        <p style="margin:0 0 24px">Olá, <strong>${userName}</strong>! Sua inscrição foi confirmada com sucesso.</p>
+        <table style="width:100%;border-collapse:collapse;margin-bottom:24px">
+          <tr style="background:#f5f6fc">
+            <td style="padding:10px 14px;font-size:12px;color:#5a5e8a;text-transform:uppercase;letter-spacing:0.06em">Protocolo</td>
+            <td style="padding:10px 14px;font-weight:700;font-size:16px;letter-spacing:0.04em">${appointment.protocol}</td>
+          </tr>
+          <tr>
+            <td style="padding:10px 14px;font-size:12px;color:#5a5e8a;text-transform:uppercase;letter-spacing:0.06em">Animal</td>
+            <td style="padding:10px 14px">${appointment.animal_name} · ${speciesLabel(appointment.species, appointment.sex)}</td>
+          </tr>
+          <tr style="background:#f5f6fc">
+            <td style="padding:10px 14px;font-size:12px;color:#5a5e8a;text-transform:uppercase;letter-spacing:0.06em">Data</td>
+            <td style="padding:10px 14px">${formatDateBR(appointment.date)} às ${appointment.time}</td>
+          </tr>
+          <tr>
+            <td style="padding:10px 14px;font-size:12px;color:#5a5e8a;text-transform:uppercase;letter-spacing:0.06em">Clínica</td>
+            <td style="padding:10px 14px">${appointment.clinic}${appointment.clinic_address ? ` — ${appointment.clinic_address}` : ''}</td>
+          </tr>
+        </table>
+        <div style="background:#fff8f0;border:1px solid #f0d0b0;border-radius:8px;padding:16px 20px;font-size:14px;color:#7a4010;margin-bottom:24px">
+          <strong>Lembre-se:</strong> leve <em>identidade, CPF e comprovante de residência originais</em> no dia da castração. Seu animal deve estar em jejum de 6 a 8 horas antes do procedimento.
+        </div>
+        <p style="margin:0;font-size:13px;color:#5a5e8a">Em caso de dúvidas, entre em contato com a prefeitura de Nova Iguaçu.</p>
+      </div>
+    </div>
+  `;
+  try {
+    const info = await smtpTransporter.sendMail({ from, to: toEmail, subject, html });
+    console.log('[email] Enviado OK — messageId:', info.messageId, '| accepted:', info.accepted, '| rejected:', info.rejected);
+  } catch (err) {
+    console.error('[email] Falha ao enviar confirmação:', err.message);
+  }
+}
+
 function registerOrActivateUser(input = {}, role, options = {}) {
   const selectedRole = role === 'protetor' ? 'protetor' : 'tutor';
   const data = parseUser(input, selectedRole);
@@ -711,17 +780,17 @@ function registerOrActivateUser(input = {}, role, options = {}) {
   if (existing) {
     db.prepare(`
       UPDATE users
-      SET name = ?, phone = ?, address = ?, neighborhood = ?, password_hash = ?, city_confirmed = 1, adult_confirmed = 1,
+      SET name = ?, phone = ?, address = ?, neighborhood = ?, email = ?, password_hash = ?, city_confirmed = 1, adult_confirmed = 1,
         active = 1, updated_at = CURRENT_TIMESTAMP
       WHERE id = ?
-    `).run(data.name, data.phone, data.address, data.neighborhood, hash, existing.id);
+    `).run(data.name, data.phone, data.address, data.neighborhood, data.email || existing.email || '', hash, existing.id);
     return getUserById(existing.id);
   }
 
   const result = db.prepare(`
-    INSERT INTO users (name, cpf, password_hash, phone, address, neighborhood, role, city_confirmed, adult_confirmed, active)
-    VALUES (?, ?, ?, ?, ?, ?, ?, 1, 1, 1)
-  `).run(data.name, data.cpf, hash, data.phone, data.address, data.neighborhood, selectedRole);
+    INSERT INTO users (name, cpf, password_hash, phone, address, neighborhood, email, role, city_confirmed, adult_confirmed, active)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, 1, 1, 1)
+  `).run(data.name, data.cpf, hash, data.phone, data.address, data.neighborhood, data.email || '', selectedRole);
   return getUserById(result.lastInsertRowid);
 }
 
@@ -731,13 +800,15 @@ function parseUser(input = {}, role) {
     cpf: normalizeCpf(input.cpf),
     phone: normalizePhone(input.phone),
     address: normalizeText(input.address),
-    neighborhood: normalizeText(input.neighborhood)
+    neighborhood: normalizeText(input.neighborhood),
+    email: normalizeText(input.email || '')
   };
   if (!data.name) throw httpError(400, 'Informe o nome completo.');
   if (!isValidCpf(data.cpf)) throw httpError(400, 'CPF inválido. Verifique os dígitos informados.');
   if (!data.address) throw httpError(400, 'Informe o endereço.');
   if (!data.neighborhood && role !== 'protetor') throw httpError(400, 'Informe o bairro.');
   if (!data.phone) throw httpError(400, 'Informe o telefone.');
+  if (data.email && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(data.email)) throw httpError(400, 'E-mail inválido.');
   if (!input.cityAdultConfirmed) throw httpError(400, 'Confirme que reside em Nova Iguaçu e é maior de 18 anos.');
   if (!input.password || String(input.password).length < 6) throw httpError(400, 'A senha deve ter pelo menos 6 caracteres.');
   return data;
