@@ -744,7 +744,7 @@ async function sendConfirmationEmail(toEmail, userName, appointment) {
         <div style="background:#fff8f0;border:1px solid #f0d0b0;border-radius:8px;padding:16px 20px;font-size:14px;color:#7a4010;margin-bottom:24px">
           <strong>Lembre-se:</strong> leve <em>identidade, CPF e comprovante de residência originais</em> no dia da castração. Seu animal deve estar em jejum de 6 a 8 horas antes do procedimento.
         </div>
-        <p style="margin:0;font-size:13px;color:#5a5e8a">Em caso de dúvidas, entre em contato com a prefeitura de Nova Iguaçu.</p>
+        <p style="margin:0;font-size:13px;color:#5a5e8a">Em caso de dúvidas, entre em contato com a Secretaria Municipal de Defesa e Proteção dos Animais.</p>
       </div>
     </div>
   `;

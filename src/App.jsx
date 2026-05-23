@@ -1715,6 +1715,8 @@ function ProtectorsTab({ protectors, clinics, reload, auth }) {
   return <UserManager title="Protetores cadastrados" users={mapped} clinics={clinics} reload={reload} auth={auth} defaultRole="protetor" />;
 }
 
+const PAGE_SIZE = 20;
+
 function UserManager({ title, users, clinics, reload, auth, defaultRole }) {
   const blank = {
     name: '',
@@ -1735,6 +1737,7 @@ function UserManager({ title, users, clinics, reload, auth, defaultRole }) {
     clinic_id: '',
     status: ''
   });
+  const [page, setPage] = useState(1);
   const [error, setError] = useState('');
   const [importResult, setImportResult] = useState(null);
   const [importing, setImporting] = useState(false);
@@ -1819,6 +1822,12 @@ function UserManager({ title, users, clinics, reload, auth, defaultRole }) {
       );
     });
   }, [users, filters]);
+
+  const totalPages = Math.max(1, Math.ceil(filteredUsers.length / PAGE_SIZE));
+  const safePage = Math.min(page, totalPages);
+  const pagedUsers = filteredUsers.slice((safePage - 1) * PAGE_SIZE, safePage * PAGE_SIZE);
+
+  useEffect(() => { setPage(1); }, [filters]);
 
   const allSelected = filteredUsers.length > 0 && filteredUsers.every((u) => selectedIds.has(u.id));
 
@@ -1965,7 +1974,11 @@ function UserManager({ title, users, clinics, reload, auth, defaultRole }) {
         <button className="button ghost" type="button" onClick={() => setFilters({ search: '', role: '', clinic_id: '', status: '' })}>
           Limpar filtros
         </button>
-        <span className="filter-count">{filteredUsers.length} de {users.length} usuários</span>
+        <span className="filter-count">
+          {filteredUsers.length === users.length
+            ? `${users.length} usuário${users.length !== 1 ? 's' : ''}`
+            : `${filteredUsers.length} de ${users.length} usuários`}
+        </span>
       </div>
       <div className="slots-toolbar">
         <button className="button ghost" type="button" onClick={toggleSelectAll}>
@@ -1981,7 +1994,7 @@ function UserManager({ title, users, clinics, reload, auth, defaultRole }) {
       </div>
       <DataTable
         columns={['', 'Nome', 'CPF', 'Telefone', 'Tipo', 'Clínica', 'Status', 'Ações']}
-        rows={filteredUsers.map((user) => [
+        rows={pagedUsers.map((user) => [
           <input key={`chk-${user.id}`} type="checkbox" checked={selectedIds.has(user.id)} onChange={() => toggleSelected(user.id)} />,
           user.name,
           maskCpf(user.cpf),
@@ -1992,6 +2005,18 @@ function UserManager({ title, users, clinics, reload, auth, defaultRole }) {
           <TableActions key={user.id} onEdit={() => edit(user)} onDelete={() => remove(user.id)} onHardDelete={() => removeHard(user.id)} />
         ])}
       />
+      {totalPages > 1 && (
+        <div className="pagination">
+          <button className="button ghost small" disabled={safePage === 1} onClick={() => setPage(safePage - 1)}>‹ Anterior</button>
+          <span className="pagination-info">
+            Página {safePage} de {totalPages}
+            <span className="pagination-range">
+              ({(safePage - 1) * PAGE_SIZE + 1}–{Math.min(safePage * PAGE_SIZE, filteredUsers.length)} de {filteredUsers.length})
+            </span>
+          </span>
+          <button className="button ghost small" disabled={safePage === totalPages} onClick={() => setPage(safePage + 1)}>Próxima ›</button>
+        </div>
+      )}
     </div>
   );
 }
