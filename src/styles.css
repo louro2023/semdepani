@@ -560,6 +560,13 @@ main {
   align-items: flex-start;
 }
 
+.ed-main-actions {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
 .ed-actions .button.primary {
   background: var(--accent);
   border-color: var(--accent);
@@ -575,6 +582,14 @@ main {
   background: #c4611a;
   border-color: #c4611a;
   box-shadow: 0 6px 24px rgba(224, 112, 32, 0.38);
+}
+
+.ed-main-actions .button.secondary {
+  min-height: 50px;
+  padding: 0 20px;
+  color: var(--primary-dark);
+  background: #fff;
+  border-color: var(--line);
 }
 
 .ed-secondary-actions {

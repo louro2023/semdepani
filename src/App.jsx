@@ -151,9 +151,10 @@ export default function App() {
           <Wizard
             auth={auth}
             setAuth={setAuthState}
-            onDone={() => {
-              setView('home');
-              setNotice('Inscrição registrada com sucesso! Verifique seu e-mail para a confirmação.');
+            onDone={({ token, user: signedUser } = {}) => {
+              if (token && signedUser) setAuthState(token, signedUser);
+              setView('usuario');
+              setNotice('Inscrição registrada com sucesso! Você já está logado na área do tutor.');
               loadAvailability();
               setTimeout(() => setNotice(''), 6000);
             }}
@@ -227,9 +228,14 @@ function HomeView({ availability, auth, setView }) {
             Cadastre-se, escolha uma clínica e receba agendamento automático — sem filas, sem burocracia.
           </p>
           <div className="ed-actions">
-            <button className="button primary large" type="button" onClick={() => setView('inscricao')}>
-              <CalendarPlus size={20} /> Fazer inscrição
-            </button>
+            <div className="ed-main-actions">
+              <button className="button primary large" type="button" onClick={() => setView('inscricao')}>
+                <CalendarPlus size={20} /> Fazer inscrição
+              </button>
+              <button className="button secondary large" type="button" onClick={() => setView('usuario')}>
+                <LogIn size={20} /> Faça login como tutor
+              </button>
+            </div>
             <div className="ed-secondary-actions">
               <button className="button text" type="button" onClick={() => setView('protetor')}>
                 <Shield size={15} /> Protetor
@@ -322,16 +328,18 @@ function Wizard({ auth, setAuth, onDone }) {
   const [clinicsLoading, setClinicsLoading] = useState(false);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
+  const [cpfRegistrationError, setCpfRegistrationError] = useState('');
   const [validationAttempted, setValidationAttempted] = useState(false);
   const [result, setResult] = useState(null);
 
   const stepTitle = ['Dados do tutor', 'Termos e regras', 'Dados do animal', 'Escolher clínica', 'Confirmação'][step - 1];
   const cpfDigits = onlyDigits(user.cpf);
-  const cpfError = getCpfValidationMessage(user.cpf);
+  const cpfError = getCpfValidationMessage(user.cpf) || cpfRegistrationError;
   const showStepOneFieldErrors = validationAttempted && step === 1 && !auth;
 
   function updateUser(field, value) {
     setError('');
+    if (field === 'cpf') setCpfRegistrationError('');
     setUser((current) => ({ ...current, [field]: value }));
   }
 
@@ -370,12 +378,36 @@ function Wizard({ auth, setAuth, onDone }) {
     return '';
   }
 
-  function nextStep() {
+  async function checkCpfRegistration() {
+    const data = await request(`/public/cpf-status?cpf=${cpfDigits}`);
+    if (data.registered) {
+      return 'Já existe um usuário cadastrado com esse CPF. Faça login como tutor para acessar seus agendamentos ou continuar uma nova solicitação.';
+    }
+    return '';
+  }
+
+  async function nextStep() {
     setValidationAttempted(true);
     const message = validateStep(step);
     if (message) {
       setError(message);
       return;
+    }
+    if (step === 1 && !auth) {
+      setLoading(true);
+      try {
+        const cpfMessage = await checkCpfRegistration();
+        if (cpfMessage) {
+          setCpfRegistrationError(cpfMessage);
+          setError(cpfMessage);
+          return;
+        }
+      } catch (err) {
+        setError(err.message);
+        return;
+      } finally {
+        setLoading(false);
+      }
     }
     setError('');
     setValidationAttempted(false);
@@ -405,9 +437,11 @@ function Wizard({ auth, setAuth, onDone }) {
       } else {
         const data = await request('/public/inscricao', { method: 'POST', body: { user, role, animal, terms, clinicId: selectedClinicId } });
         appointment = data.appointment;
+        onDone({ token: data.token, user: data.user, appointment });
+        return;
       }
       setResult(appointment);
-      onDone();
+      onDone({ appointment });
     } catch (err) {
       setError(err.message);
     } finally {
@@ -630,7 +664,7 @@ function Wizard({ auth, setAuth, onDone }) {
             </button>
             {step < 5 ? (
               <button className="button primary" type="button" onClick={nextStep} disabled={loading}>
-                Continuar
+                {loading && step === 1 ? 'Verificando...' : 'Continuar'}
               </button>
             ) : (
               <button className="button primary" type="button" onClick={submit} disabled={loading}>

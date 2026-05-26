@@ -147,6 +147,17 @@ app.get('/api/availability', (_req, res) => {
   });
 });
 
+app.get('/api/public/cpf-status', (req, res) => {
+  try {
+    const cpf = normalizeCpf(req.query.cpf);
+    if (!isValidCpf(cpf)) throw httpError(400, 'CPF inválido. Verifique os dígitos informados.');
+    const existing = getUserByCpf(cpf);
+    res.json({ registered: Boolean(existing?.password_hash) });
+  } catch (error) {
+    sendError(res, error);
+  }
+});
+
 app.post('/api/auth/login', (req, res) => {
   const { cpf, password } = req.body;
   const user = getUserByCpf(cpf);
@@ -765,13 +776,8 @@ function registerOrActivateUser(input = {}, role, options = {}) {
     throw httpError(403, 'CPF de protetor não está pré-cadastrado. Solicite cadastro na área administrativa.');
   }
 
-  if (existing?.password_hash && !options.allowExistingPassword) {
-    throw httpError(409, 'CPF já cadastrado. Use o login para acessar.');
-  }
-
-  if (existing?.password_hash && options.allowExistingPassword) {
-    const ok = bcrypt.compareSync(String(input.password || ''), existing.password_hash);
-    if (!ok) throw httpError(401, 'Este CPF já possui senha. Entre com a senha correta ou use a área de login.');
+  if (existing?.password_hash) {
+    throw httpError(409, 'Já existe um usuário cadastrado com esse CPF. Faça login como tutor para acessar seus agendamentos ou continuar uma nova solicitação.');
   }
 
   const hash = input.password ? bcrypt.hashSync(String(input.password), 12) : existing?.password_hash;
