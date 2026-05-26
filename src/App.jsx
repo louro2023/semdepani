@@ -1480,6 +1480,8 @@ function ClinicsTab({ clinics, reload, auth }) {
   );
 }
 
+const SLOTS_PAGE_SIZE = 20;
+
 function SlotsTab({ slots, clinics, reload, auth }) {
   const blank = { date: '', time: '09:00', species: 'gato', sex: 'femea', total_quantity: 1, clinic_id: '' };
   const [form, setForm] = useState(blank);
@@ -1487,6 +1489,7 @@ function SlotsTab({ slots, clinics, reload, auth }) {
   const [filters, setFilters] = useState({ clinic_id: '', date: '', type: '', status: '' });
   const [error, setError] = useState('');
   const [selectedIds, setSelectedIds] = useState(new Set());
+  const [page, setPage] = useState(1);
 
   const clinicOptions = useMemo(() => clinics.filter((clinic) => clinic.active), [clinics]);
 
@@ -1502,6 +1505,23 @@ function SlotsTab({ slots, clinics, reload, auth }) {
       );
     });
   }, [slots, filters]);
+
+  const slotsTotalPages = Math.max(1, Math.ceil(filteredSlots.length / SLOTS_PAGE_SIZE));
+  const safeSlotsPage = Math.min(page, slotsTotalPages);
+  const pagedSlots = filteredSlots.slice((safeSlotsPage - 1) * SLOTS_PAGE_SIZE, safeSlotsPage * SLOTS_PAGE_SIZE);
+
+  useEffect(() => { setPage(1); }, [filters]);
+
+  const speciesSummary = useMemo(() => {
+    const map = {};
+    filteredSlots.forEach((s) => {
+      const key = `${s.species}-${s.sex}`;
+      if (!map[key]) map[key] = { label: s.label || `${s.species} ${s.sex}`, total: 0, occupied: 0 };
+      map[key].total += Number(s.total_quantity || 0);
+      map[key].occupied += Number(s.occupied_quantity || 0);
+    });
+    return Object.values(map);
+  }, [filteredSlots]);
 
   const allSelected = filteredSlots.length > 0 && filteredSlots.every((s) => selectedIds.has(s.id));
 
@@ -1667,8 +1687,22 @@ function SlotsTab({ slots, clinics, reload, auth }) {
         <button className="button ghost" type="button" onClick={() => setFilters({ clinic_id: '', date: '', type: '', status: '' })}>
           Limpar filtros
         </button>
-        <span className="filter-count">{filteredSlots.length} de {slots.length} vagas</span>
+        <span className="filter-count">
+          {filteredSlots.reduce((acc, s) => acc + Number(s.total_quantity || 0), 0)} vagas
+          ({filteredSlots.length} de {slots.length} linhas)
+        </span>
       </div>
+      {speciesSummary.length > 0 && (
+        <div className="slots-species-summary">
+          {speciesSummary.map((item) => (
+            <div key={item.label} className="slots-species-chip">
+              <span className="slots-species-label">{capitalize(item.label)}</span>
+              <span className="slots-species-available">{item.total - item.occupied} disp.</span>
+              <span className="slots-species-total">/ {item.total} total</span>
+            </div>
+          ))}
+        </div>
+      )}
       <div className="slots-toolbar">
         <button className="button ghost" type="button" onClick={toggleSelectAll}>
           {allSelected ? 'Desmarcar Todas' : 'Selecionar Todas'}
@@ -1687,7 +1721,7 @@ function SlotsTab({ slots, clinics, reload, auth }) {
       </div>
       <DataTable
         columns={['', 'Data', 'Hora', 'Tipo', 'Clínica', 'Total', 'Ocupadas', 'Status', 'Ações']}
-        rows={filteredSlots.map((slot) => [
+        rows={pagedSlots.map((slot) => [
           <input key={`chk-${slot.id}`} type="checkbox" checked={selectedIds.has(slot.id)} onChange={() => toggleSelected(slot.id)} />,
           formatDate(slot.date),
           slot.time,
@@ -1699,6 +1733,18 @@ function SlotsTab({ slots, clinics, reload, auth }) {
           <TableActions key={slot.id} onEdit={() => edit(slot)} onDelete={() => remove(slot.id)} onHardDelete={() => removeHard(slot.id)} />
         ])}
       />
+      {slotsTotalPages > 1 && (
+        <div className="pagination">
+          <button className="button ghost small" disabled={safeSlotsPage === 1} onClick={() => setPage(safeSlotsPage - 1)}>‹ Anterior</button>
+          <span className="pagination-info">
+            Página {safeSlotsPage} de {slotsTotalPages}
+            <span className="pagination-range">
+              ({(safeSlotsPage - 1) * SLOTS_PAGE_SIZE + 1}–{Math.min(safeSlotsPage * SLOTS_PAGE_SIZE, filteredSlots.length)} de {filteredSlots.length} linhas)
+            </span>
+          </span>
+          <button className="button ghost small" disabled={safeSlotsPage === slotsTotalPages} onClick={() => setPage(safeSlotsPage + 1)}>Próxima ›</button>
+        </div>
+      )}
     </div>
   );
 }

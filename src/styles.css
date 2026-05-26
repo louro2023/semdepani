@@ -1320,6 +1320,38 @@ select:focus,
   font-weight: 800;
 }
 
+.slots-species-summary {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  padding: 8px 0 4px;
+}
+
+.slots-species-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 5px 12px;
+  font-size: 13px;
+}
+
+.slots-species-label {
+  font-weight: 700;
+  color: var(--text);
+}
+
+.slots-species-available {
+  color: var(--primary);
+  font-weight: 700;
+}
+
+.slots-species-total {
+  color: var(--text-muted);
+}
+
 .slots-toolbar {
   display: flex;
   align-items: center;
