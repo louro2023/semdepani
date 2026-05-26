@@ -78,14 +78,14 @@ scripts/
 ## Regras de negócio
 
 ### Limites de agendamento
-- **Tutor**: 1 agendamento por mês (verificado pela função `getMonthlyUsage`)
-- **Protetor**: máximo **4 agendamentos no total** (verificado por `getTotalUsage` — não por mês)
+- **Tutor**: 1 agendamento a cada 30 dias (verificado por `get30DayUsage`)
+- **Protetor**: até 4 agendamentos a cada 30 dias (verificado por `get30DayUsage`)
 - Cancelamento libera a vaga (decremented em `slots.occupied_quantity`)
 
 ### Fluxo de agendamento (`createAutomaticAppointment`)
 1. Insere animal no BD
 2. Busca slots disponíveis filtrados por species + sex (+ clinic_id opcional)
-3. Verifica limite: protetor = total ever, tutor = mês do slot
+3. Verifica limite de uso dos últimos 30 dias pelo role (`ROLE_LIMITS`)
 4. Reserva primeiro slot disponível dentro do limite
 5. Gera protocolo único `NI-YYYYMMDD-XXXXX`
 6. INSERT em `appointments`
@@ -107,6 +107,9 @@ scripts/
 ### Restrições de registro
 - Protetor precisa de CPF pré-cadastrado (`pre_registered = 1`) para criar conta
 - Admin cadastra protetores via painel ou importação do DOCX
+- CPF do tutor/protetor é validado matematicamente pelos dígitos verificadores (`isValidCpf`)
+- CPF já cadastrado com senha não pode refazer inscrição pública; UI orienta usar login como tutor
+- Endpoint público `GET /api/public/cpf-status?cpf=` permite avisar CPF já cadastrado ainda na etapa 1
 
 ---
 
@@ -114,13 +117,17 @@ scripts/
 
 | Etapa | Conteúdo |
 |-------|----------|
-| 1 — Dados do tutor | Nome, CPF, endereço, bairro, telefone, **e-mail** (opcional), senha, checkbox cidade/adulto |
+| 1 — Dados do tutor | Nome, CPF numérico válido, endereço completo, bairro, telefone, **e-mail** (opcional), senha mínima 6 chars, checkbox cidade/adulto |
 | 2 — Termos e regras | Lista completa de requisitos + aviso obrigatório de documentos físicos |
 | 3 — Dados do animal | Espécie (gato/cão), sexo, nome, raça, idade aproximada |
 | 4 — Escolher clínica | Busca `clinics/available` e lista botões de seleção; horário é automático |
 | 5 — Confirmação | Revisão: perfil, animal, clínica → botão "Confirmar inscrição" |
 
-**Pós-inscrição**: redireciona para home **sem logar** o usuário. Aviso de sucesso exibido 6s.
+**Pós-inscrição**: inscrição pública retorna `token`, `user` e `appointment`; frontend autentica o tutor automaticamente e redireciona para a área do tutor. Aviso de sucesso exibido 6s.
+
+**CPF já cadastrado**: na etapa 1, o frontend consulta `/api/public/cpf-status?cpf=` após CPF válido. Se já existir usuário com senha, mostra aviso: "Já existe um usuário cadastrado com esse CPF..." e orienta login.
+
+**Login do tutor**: home exibe botão "Faça login como tutor" ao lado de "Fazer inscrição", levando para `LoginView` da área do tutor.
 
 **Confirmação por e-mail**: se e-mail preenchido e `SMTP_HOST` configurado, envia e-mail HTML com protocolo, animal, data, clínica e lembrete de documentos. Falha de SMTP não bloqueia inscrição (try/catch assíncrono após resposta HTTP).
 
@@ -136,6 +143,7 @@ scripts/
 | GET | `/api/health` | Health check |
 | GET | `/api/availability` | Vagas totais agrupadas por species/sex |
 | GET | `/api/clinics/available?species=&sex=` | Clínicas com vagas para a combinação |
+| GET | `/api/public/cpf-status?cpf=` | Verifica se CPF válido já tem usuário com senha |
 | POST | `/api/auth/login` | Login (rate limit 15/min) |
 | POST | `/api/auth/register` | Registro sem agendamento |
 | POST | `/api/public/inscricao` | Registro + agendamento automático (rate limit 5/min) |
@@ -196,7 +204,7 @@ scripts/
 
 ## Termos exigidos (step 2 do wizard)
 
-- 1 agendamento/mês por tutor; protetor até 4 no total
+- 1 agendamento a cada 30 dias por tutor; protetor até 4 a cada 30 dias
 - Chegar no horário; responsável fica durante todo procedimento e transporta animal sonolento
 - Cães: coleira + guia + focinheira. Gatos: 1 por caixa
 - Banho no dia anterior; sem pulgas/carrapatos
@@ -204,7 +212,7 @@ scripts/
 - Peso cães/cadelas: 3,5–25 kg (salvo autorização veterinária)
 - Peso felinos: mínimo 2 kg
 - Machos: ambos testículos na bolsa escrotal
-- Braquicefálicos **proibidos**: Pug, Shih Tzu, Bulldog Fr/Ing, Lhasa Apso, Boxer, Pequinês, Boston Terrier, Cavalier KCS, Gato Persa, Chow-chow, American Bully
+- Animais braquicefálicos, como Pug, Shih Tzu, Bulldog Francês, Bulldog Inglês, Lhasa Apso, Boxer, Pequinês, Boston Terrier, Cavalier King Charles Spaniel, Gato Persa, Chow Chow, American Bully, entre outros, não poderão ser castrados pelo programa
 - Cadelas/gatas: sem cio, gestação ou amamentação
 - Jejum absoluto: 6–8h antes
 - Informar medicações ao veterinário
@@ -224,7 +232,7 @@ scripts/
 - `migrateSlotClinics()` sincroniza slots antigos sem `clinic_id`
 - Upload de docs ainda tem endpoint (`POST /api/me/documents`) mas a UI foi removida; arquivos antigos ainda servidos via `GET /api/documents/:userId/:type`
 - Importação de planilha (`/api/admin/users/import`) cria usuários com `role='protetor'` e `pre_registered=1`
-- Home redesenhada com layout editorial: classes `ed-*`, fontes Fraunces (serif display) + DM Sans, painel de vagas navy, acentos laranja
+- Home redesenhada com layout editorial: classes `ed-*`, fontes Fraunces (serif display) + DM Sans, painel de vagas navy, acentos laranja e CTA de login do tutor
 
 ## Deploy em produção
 
