@@ -805,12 +805,12 @@ function parseUser(input = {}, role) {
   };
   if (!data.name) throw httpError(400, 'Informe o nome completo.');
   if (!isValidCpf(data.cpf)) throw httpError(400, 'CPF inválido. Verifique os dígitos informados.');
-  if (!data.address) throw httpError(400, 'Informe o endereço.');
+  if (!data.address) throw httpError(400, 'Informe o endereço completo.');
   if (!data.neighborhood && role !== 'protetor') throw httpError(400, 'Informe o bairro.');
   if (!data.phone) throw httpError(400, 'Informe o telefone.');
   if (data.email && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(data.email)) throw httpError(400, 'E-mail inválido.');
   if (!input.cityAdultConfirmed) throw httpError(400, 'Confirme que reside em Nova Iguaçu e é maior de 18 anos.');
-  if (!input.password || String(input.password).length < 6) throw httpError(400, 'A senha deve ter pelo menos 6 caracteres.');
+  if (!input.password || String(input.password).length < 6) throw httpError(400, 'A senha de acesso deve ter pelo menos 6 caracteres para ser criada.');
   return data;
 }
 

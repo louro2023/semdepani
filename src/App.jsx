@@ -49,6 +49,9 @@ const emptyTerms = {
   documentsAccepted: false
 };
 
+const CPF_DIGITS_LENGTH = 11;
+const PASSWORD_MIN_LENGTH = 6;
+
 function getStoredAuth() {
   try {
     const token = localStorage.getItem('castracao_token');
@@ -319,11 +322,16 @@ function Wizard({ auth, setAuth, onDone }) {
   const [clinicsLoading, setClinicsLoading] = useState(false);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
+  const [validationAttempted, setValidationAttempted] = useState(false);
   const [result, setResult] = useState(null);
 
   const stepTitle = ['Dados do tutor', 'Termos e regras', 'Dados do animal', 'Escolher clínica', 'Confirmação'][step - 1];
+  const cpfDigits = onlyDigits(user.cpf);
+  const cpfError = getCpfValidationMessage(user.cpf);
+  const showStepOneFieldErrors = validationAttempted && step === 1 && !auth;
 
   function updateUser(field, value) {
+    setError('');
     setUser((current) => ({ ...current, [field]: value }));
   }
 
@@ -347,18 +355,46 @@ function Wizard({ auth, setAuth, onDone }) {
     }
   }
 
-  function canAdvance() {
-    if (step === 1 && !auth) {
-      return user.name && user.cpf && user.address && user.neighborhood && user.phone && user.password.length >= 6 && user.cityAdultConfirmed;
+  function validateStep(targetStep = step) {
+    if (targetStep === 1 && !auth) {
+      if (!user.name || !user.address || !user.neighborhood || !user.phone) return 'Preencha todos os campos obrigatórios da etapa do tutor.';
+      if (cpfError) return cpfError;
+      if (user.password.length < PASSWORD_MIN_LENGTH) return `A senha de acesso deve ter pelo menos ${PASSWORD_MIN_LENGTH} caracteres para ser criada.`;
+      if (!user.cityAdultConfirmed) return 'Confirme que reside em Nova Iguaçu e é maior de 18 anos.';
     }
-    if (step === 1 && auth) return true;
-    if (step === 2) return terms.requirementsAccepted && terms.documentsAccepted;
-    if (step === 3) return Boolean(animal.name && animal.species && animal.sex && animal.breed && animal.approximateAge);
-    if (step === 4) return Boolean(selectedClinicId);
-    return true;
+    if (targetStep === 2 && (!terms.requirementsAccepted || !terms.documentsAccepted)) return 'Aceite os termos e confirme os documentos para continuar.';
+    if (targetStep === 3 && !animal.name) return 'Informe o nome do animal.';
+    if (targetStep === 3 && !animal.breed) return 'Informe a raça do animal.';
+    if (targetStep === 3 && !animal.approximateAge) return 'Informe a idade aproximada do animal.';
+    if (targetStep === 4 && !selectedClinicId) return 'Selecione uma clínica disponível para continuar.';
+    return '';
+  }
+
+  function nextStep() {
+    setValidationAttempted(true);
+    const message = validateStep(step);
+    if (message) {
+      setError(message);
+      return;
+    }
+    setError('');
+    setValidationAttempted(false);
+    if (step === 3) {
+      setStep(4);
+      loadClinics();
+    } else {
+      setStep((value) => value + 1);
+    }
   }
 
   async function submit() {
+    const invalidStep = [1, 2, 3, 4].find((candidate) => validateStep(candidate));
+    if (invalidStep) {
+      setValidationAttempted(true);
+      setStep(invalidStep);
+      setError(validateStep(invalidStep));
+      return;
+    }
     setLoading(true);
     setError('');
     try {
@@ -410,12 +446,28 @@ function Wizard({ auth, setAuth, onDone }) {
                         {role === 'protetor' ? <small>O CPF precisa constar na lista de protetores cadastrados pela administração.</small> : null}
                       </label>
                       <TextField label="Nome completo" value={user.name} onChange={(value) => updateUser('name', value)} required />
-                      <TextField label="CPF" value={user.cpf} onChange={(value) => updateUser('cpf', value)} required />
-                      <TextField label="Endereço" value={user.address} onChange={(value) => updateUser('address', value)} required />
+                      <TextField
+                        label="CPF"
+                        value={user.cpf}
+                        onChange={(value) => updateUser('cpf', onlyDigits(value).slice(0, CPF_DIGITS_LENGTH))}
+                        inputMode="numeric"
+                        maxLength={CPF_DIGITS_LENGTH}
+                        hint={`Somente números, ${CPF_DIGITS_LENGTH} dígitos`}
+                        error={showStepOneFieldErrors ? cpfError : ''}
+                        required
+                      />
+                      <TextField label="Endereço Completo" value={user.address} onChange={(value) => updateUser('address', value)} required />
                       <TextField label="Bairro" value={user.neighborhood} onChange={(value) => updateUser('neighborhood', value)} required />
                       <TextField label="Telefone" value={user.phone} onChange={(value) => updateUser('phone', value)} required />
                       <TextField label="E-mail" value={user.email} onChange={(value) => updateUser('email', value)} type="email" hint="Você receberá a confirmação da inscrição por e-mail" />
-                      <TextField label="Senha de acesso" value={user.password} onChange={(value) => updateUser('password', value)} type="password" required />
+                      <TextField
+                        label={`Senha de acesso (mínimo ${PASSWORD_MIN_LENGTH} caracteres)`}
+                        value={user.password}
+                        onChange={(value) => updateUser('password', value)}
+                        type="password"
+                        error={showStepOneFieldErrors && user.password.length < PASSWORD_MIN_LENGTH ? `Use pelo menos ${PASSWORD_MIN_LENGTH} caracteres.` : ''}
+                        required
+                      />
                     </>
                   ) : (
                     <div className="signed-box span-2">
@@ -449,7 +501,7 @@ function Wizard({ auth, setAuth, onDone }) {
                     'Cães e cadelas: peso mínimo 3,5 kg e máximo 25 kg (salvo análise clínica e autorização expressa do veterinário de plantão).',
                     'Felinos: peso mínimo de 2 kg.',
                     'Animais machos devem ter ambos os testículos na bolsa escrotal.',
-                    'Animais braquicefálicos não poderão ser castrados pelo programa (Pug, Shih Tzu, Bulldog Francês e Inglês, Lhasa Apso, Boxer, Pequinês, Boston Terrier, Cavalier King Charles Spaniel, Gato Persa, Chow-chow, American Bully, entre outros).',
+                    'Animais braquicefálicos, como Pug, Shih Tzu, Bulldog Francês, Bulldog Inglês, Lhasa Apso, Boxer, Pequinês, Boston Terrier, Cavalier King Charles Spaniel, Gato Persa, Chow Chow, American Bully, entre outros, não poderão ser castrados pelo programa.',
                     'Cadelas e gatas não devem estar no cio, gestantes ou amamentando.',
                     'Jejum absoluto de água e comida por 6 a 8 horas antes do procedimento.',
                     'Informar ao veterinário se o animal usa qualquer medicação.',
@@ -577,11 +629,11 @@ function Wizard({ auth, setAuth, onDone }) {
               Voltar
             </button>
             {step < 5 ? (
-              <button className="button primary" type="button" onClick={() => { if (step === 3) { setStep(4); loadClinics(); } else setStep((value) => value + 1); }} disabled={!canAdvance()}>
+              <button className="button primary" type="button" onClick={nextStep} disabled={loading}>
                 Continuar
               </button>
             ) : (
-              <button className="button primary" type="button" onClick={submit} disabled={loading || !canAdvance()}>
+              <button className="button primary" type="button" onClick={submit} disabled={loading}>
                 <CalendarPlus size={18} /> {loading ? 'Agendando...' : 'Confirmar inscrição'}
               </button>
             )}
@@ -2069,12 +2121,21 @@ function ResultPanel({ appointment }) {
   );
 }
 
-function TextField({ label, value, onChange, type = 'text', required = false, hint }) {
+function TextField({ label, value, onChange, type = 'text', required = false, hint, error = '', inputMode, maxLength }) {
   return (
     <label className="field">
       <span>{label}{required ? ' *' : ''}</span>
-      <input type={type} value={value} onChange={(event) => onChange(event.target.value)} required={required} />
-      {hint ? <small className="field-hint">{hint}</small> : null}
+      <input
+        type={type}
+        value={value}
+        onChange={(event) => onChange(event.target.value)}
+        required={required}
+        inputMode={inputMode}
+        maxLength={maxLength}
+        aria-invalid={Boolean(error)}
+      />
+      {error ? <small className="field-error">{error}</small> : null}
+      {!error && hint ? <small className="field-hint">{hint}</small> : null}
     </label>
   );
 }
@@ -2176,4 +2237,28 @@ function normalizeSearch(value = '') {
 
 function onlyDigits(value = '') {
   return String(value).replace(/\D/g, '');
+}
+
+function getCpfValidationMessage(value = '') {
+  const digits = onlyDigits(value);
+  if (digits.length !== CPF_DIGITS_LENGTH) return `Informe ${CPF_DIGITS_LENGTH} dígitos numéricos.`;
+  if (!isValidCpf(digits)) return 'CPF inválido. Verifique os dígitos informados.';
+  return '';
+}
+
+function isValidCpf(value = '') {
+  const digits = onlyDigits(value);
+  if (digits.length !== CPF_DIGITS_LENGTH || /^(\d)\1+$/.test(digits)) return false;
+
+  let sum = 0;
+  for (let i = 0; i < 9; i += 1) sum += Number(digits[i]) * (10 - i);
+  let firstCheckDigit = 11 - (sum % 11);
+  if (firstCheckDigit >= 10) firstCheckDigit = 0;
+
+  sum = 0;
+  for (let i = 0; i < 10; i += 1) sum += Number(digits[i]) * (11 - i);
+  let secondCheckDigit = 11 - (sum % 11);
+  if (secondCheckDigit >= 10) secondCheckDigit = 0;
+
+  return Number(digits[9]) === firstCheckDigit && Number(digits[10]) === secondCheckDigit;
 }
