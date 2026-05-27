@@ -81,12 +81,7 @@ async function request(path, options = {}, token) {
 export default function App() {
   const [view, setView] = useState('home');
   const [auth, setAuth] = useState(getStoredAuth);
-  const [availability, setAvailability] = useState([]);
   const [notice, setNotice] = useState('');
-
-  useEffect(() => {
-    loadAvailability();
-  }, []);
 
   useEffect(() => {
     if (!auth?.token) return;
@@ -94,15 +89,6 @@ export default function App() {
       .then((data) => setAuthState(auth.token, data.user))
       .catch(() => logout());
   }, []);
-
-  async function loadAvailability() {
-    try {
-      const data = await request('/availability');
-      setAvailability(data.availability || []);
-    } catch (_error) {
-      setAvailability([]);
-    }
-  }
 
   function setAuthState(token, user) {
     localStorage.setItem('castracao_token', token);
@@ -144,7 +130,7 @@ export default function App() {
 
       <main>
         {view === 'home' ? (
-          <HomeView availability={availability} auth={auth} setView={setView} />
+          <HomeView auth={auth} setView={setView} />
         ) : null}
 
         {view === 'inscricao' ? (
@@ -200,15 +186,7 @@ export default function App() {
   );
 }
 
-function HomeView({ availability, auth, setView }) {
-  const totals = availability.reduce(
-    (acc, item) => {
-      acc.total += Number(item.total || 0);
-      acc.available += Number(item.available || 0);
-      return acc;
-    },
-    { total: 0, available: 0 }
-  );
+function HomeView({ auth, setView }) {
 
   return (
     <div className="home-layout">
@@ -253,23 +231,8 @@ function HomeView({ availability, auth, setView }) {
         </div>
 
         <div className="ed-avail">
-          <div className="ed-avail-header">Vagas disponíveis</div>
-          <div className="ed-avail-big">{totals.available}</div>
-          <div className="ed-avail-label">vagas abertas agora</div>
-          <div className="ed-avail-divider" />
-          <div className="ed-avail-list">
-            {availability.length ? availability.map((item) => (
-              <div className="ed-avail-item" key={`${item.species}-${item.sex}`}>
-                <span>{capitalize(item.label)}</span>
-                <strong>{item.available}</strong>
-              </div>
-            )) : <p className="ed-avail-empty">Sem vagas cadastradas no momento.</p>}
-          </div>
-          {auth ? (
-            <button className="ed-avail-btn" type="button" onClick={() => setView('usuario')}>
-              <UserRound size={16} /> Meus agendamentos
-            </button>
-          ) : null}
+          <img src="/pets.png" alt="Animais para castração" className="ed-avail-pets" />
+          <img src="/semdepa.png" alt="Semdepa" className="ed-avail-semdepa" />
         </div>
       </section>
 

@@ -471,10 +471,11 @@ main {
 /* ── Editorial Home (Direction C — Polished) ───── */
 .ed-hero {
   display: grid;
-  grid-template-columns: 1fr 300px;
+  grid-template-columns: 1fr 320px;
   min-height: 540px;
   border-radius: 20px;
   overflow: hidden;
+  transform: translateZ(0);
   box-shadow:
     0 1px 0 rgba(19, 25, 83, 0.06),
     0 8px 24px rgba(19, 25, 83, 0.08),
@@ -627,124 +628,53 @@ main {
   flex-shrink: 0;
 }
 
-/* Availability sidebar — dark navy */
+/* Image sidebar */
 .ed-avail {
   background: linear-gradient(160deg, #161d5e 0%, #0d1240 100%);
-  padding: clamp(32px, 4vw, 52px) clamp(24px, 3vw, 38px);
-  display: flex;
-  flex-direction: column;
-  color: #fff;
   border-radius: 0 20px 20px 0;
-  position: relative;
   overflow: hidden;
+  position: relative;
+  clip-path: inset(0 0 0 0 round 0 20px 20px 0);
 }
 
-.ed-avail::after {
+.ed-avail::before {
   content: '';
   position: absolute;
-  top: -80px;
-  right: -80px;
-  width: 240px;
-  height: 240px;
-  border-radius: 50%;
-  background: radial-gradient(circle, rgba(224,112,32,0.12) 0%, transparent 70%);
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 3px;
+  background: linear-gradient(90deg, var(--accent) 0%, rgba(224,112,32,0.3) 100%);
+  z-index: 2;
   pointer-events: none;
 }
 
-.ed-avail-header {
-  font-size: 0.63rem;
-  font-weight: 700;
-  letter-spacing: 0.16em;
-  text-transform: uppercase;
-  color: rgba(255, 255, 255, 0.38);
-  margin-bottom: 12px;
-  position: relative;
-  z-index: 1;
+.ed-avail-pets {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 96px;
+  width: 100%;
+  height: calc(100% - 96px);
+  object-fit: cover;
+  object-position: center top;
+  display: block;
 }
 
-.ed-avail-big {
-  font-family: 'Fraunces', Georgia, serif;
-  font-size: clamp(4.5rem, 8vw, 6.5rem);
-  font-weight: 800;
-  line-height: 0.9;
-  letter-spacing: -0.06em;
-  color: #fff;
-  position: relative;
-  z-index: 1;
-}
-
-.ed-avail-label {
-  font-size: 0.76rem;
-  color: rgba(255, 255, 255, 0.38);
-  margin-top: 8px;
-  margin-bottom: 32px;
-  position: relative;
-  z-index: 1;
-}
-
-.ed-avail-divider {
-  height: 1px;
-  background: rgba(255, 255, 255, 0.08);
-  margin-bottom: 20px;
-}
-
-.ed-avail-list {
-  display: grid;
-  flex: 1;
-  position: relative;
-  z-index: 1;
-}
-
-.ed-avail-item {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  padding: 11px 0;
-  border-bottom: 1px solid rgba(255, 255, 255, 0.07);
-  font-size: 0.84rem;
-  color: rgba(255, 255, 255, 0.58);
-  letter-spacing: 0.01em;
-}
-
-.ed-avail-item:last-child {
-  border-bottom: none;
-}
-
-.ed-avail-item strong {
-  color: #fff;
-  font-size: 1.05rem;
-  font-weight: 700;
-  font-variant-numeric: tabular-nums;
-}
-
-.ed-avail-empty {
-  color: rgba(255, 255, 255, 0.35);
-  font-size: 0.84rem;
-  margin: 0;
-  position: relative;
-  z-index: 1;
-}
-
-.ed-avail-btn {
-  margin-top: 28px;
-  background: rgba(255, 255, 255, 0.07);
-  border: 1px solid rgba(255, 255, 255, 0.14);
-  color: rgba(255,255,255,0.82);
-  border-radius: 10px;
-  padding: 11px 16px;
-  font-size: 0.84rem;
-  font-weight: 500;
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  transition: background 0.18s ease, border-color 0.18s ease;
-  position: relative;
-  z-index: 1;
-}
-
-.ed-avail-btn:hover {
-  background: rgba(255, 255, 255, 0.13);
-  border-color: rgba(255, 255, 255, 0.22);
+.ed-avail-semdepa {
+  position: absolute;
+  bottom: 0;
+  left: 0;
+  right: 0;
+  width: 100%;
+  height: 96px;
+  object-fit: contain;
+  object-position: center;
+  background: linear-gradient(160deg, #161d5e 0%, #0d1240 100%);
+  padding: 12px 24px;
+  box-sizing: border-box;
+  display: block;
 }
 
 /* How it works */
