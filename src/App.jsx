@@ -604,7 +604,6 @@ function Wizard({ auth, onDone }) {
                     </span>
                   </div>
                   {[
-                    'Tutor pode realizar 1 agendamento por mês; Protetor Cadastrado pode realizar até 4 agendamentos por mês; Administrador pode realizar agendamentos sem limite.',
                     'Chegue no horário informado e permaneça na clínica durante todo o procedimento. O responsável deve estar preparado para transportar o animal sonolento após a cirurgia.',
                     'Cães: coleira, guia e focinheira (se necessário). Gatos: 1 por caixa de transporte.',
                     'Banho no dia anterior ao procedimento, sem pulgas ou carrapatos.',
