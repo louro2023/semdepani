@@ -12,6 +12,7 @@ import {
   Eye,
   FileCheck,
   Home,
+  KeyRound,
   LogIn,
   LogOut,
   MessageCircle,
@@ -935,7 +936,49 @@ function UserDashboard({ auth, setView }) {
           </article>
         )) : <p className="muted">Nenhum agendamento encontrado.</p>}
       </div>
+      {data.user.role === 'protetor' ? <ChangePasswordForm auth={auth} /> : null}
     </section>
+  );
+}
+
+function ChangePasswordForm({ auth }) {
+  const [form, setForm] = useState({ currentPassword: '', newPassword: '', confirmPassword: '' });
+  const [error, setError] = useState('');
+  const [success, setSuccess] = useState('');
+  const [loading, setLoading] = useState(false);
+
+  async function handleSubmit(event) {
+    event.preventDefault();
+    setError('');
+    setSuccess('');
+    if (form.newPassword !== form.confirmPassword) {
+      setError('Nova senha e confirmação não coincidem.');
+      return;
+    }
+    setLoading(true);
+    try {
+      await request('/me/password', { method: 'PUT', body: { currentPassword: form.currentPassword, newPassword: form.newPassword } }, auth.token);
+      setSuccess('Senha alterada com sucesso.');
+      setForm({ currentPassword: '', newPassword: '', confirmPassword: '' });
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  return (
+    <details className="change-password-section">
+      <summary>Alterar senha</summary>
+      <form className="inline-form compact" onSubmit={handleSubmit}>
+        {error ? <InlineAlert message={error} /> : null}
+        {success ? <div className="inline-success"><CheckCircle2 size={18} />{success}</div> : null}
+        <TextField label="Senha atual" value={form.currentPassword} onChange={(value) => setForm({ ...form, currentPassword: value })} type="password" required />
+        <TextField label="Nova senha" value={form.newPassword} onChange={(value) => setForm({ ...form, newPassword: value })} type="password" required />
+        <TextField label="Confirmar nova senha" value={form.confirmPassword} onChange={(value) => setForm({ ...form, confirmPassword: value })} type="password" required />
+        <button className="button secondary" type="submit" disabled={loading}><KeyRound size={18} />{loading ? 'Salvando...' : 'Alterar senha'}</button>
+      </form>
+    </details>
   );
 }
 
@@ -1003,6 +1046,7 @@ function ClinicPanel({ auth }) {
       {loading ? <Loading label="Carregando agendamentos" /> : (
         <AppointmentsTab appointments={appointments} reload={loadAppointments} auth={auth} />
       )}
+      {!isAdmin ? <ChangePasswordForm auth={auth} /> : null}
     </section>
   );
 }
@@ -1081,7 +1125,7 @@ function AdminPanel({ auth }) {
 }
 
 function printReport(reports) {
-  const { totals, perDay, perClinic, castrationsByClinic, castrationsByType } = reports;
+  const { totals, perDay, perClinic, castrationsByClinic, castrationsByType, castrationsDetail = [] } = reports;
   const date = new Date().toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit', year: 'numeric' });
 
   const tableStyle = 'width:100%;border-collapse:collapse;font-size:13px;margin-bottom:24px;';
@@ -1165,6 +1209,24 @@ function printReport(reports) {
             barCell(r.total, maxDay)
           ]))}
   </section>
+
+  <section style="page-break-before:always;">
+    <h2>Detalhe das castrações realizadas</h2>
+    ${castrationsDetail.length === 0
+      ? '<p style="color:#567069;font-size:13px;">Nenhuma castração registrada como realizada.</p>'
+      : table(
+          [['Protocolo'], ['Tutor'], ['Animal'], ['Raça'], ['Clínica'], ['Data'], ['Microchip']],
+          castrationsDetail.map((r) => [
+            r.protocol,
+            r.tutor_name,
+            `${r.animal_name} · ${r.animal_type_label}`,
+            r.breed || '—',
+            r.clinic,
+            new Date(r.date + 'T12:00:00').toLocaleDateString('pt-BR'),
+            r.microchip ? `${r.microchip.slice(0, 15)} ${r.microchip.slice(15)}` : '—'
+          ])
+        )}
+  </section>
   </body></html>`;
 
   const win = window.open('', '_blank', 'width=900,height=700');
@@ -1177,7 +1239,7 @@ function printReport(reports) {
 function ReportsTab({ reports }) {
   if (!reports?.totals) return <Loading label="Carregando relatórios" />;
 
-  const { totals, perDay, perClinic, castrationsByClinic, castrationsByType } = reports;
+  const { totals, perDay, perClinic, castrationsByClinic, castrationsByType, castrationsDetail = [] } = reports;
 
   function exportCsv(rows, headers, filename) {
     const lines = [headers.join(','), ...rows.map((r) => headers.map((h) => `"${r[h] ?? ''}"`).join(','))];
@@ -1331,6 +1393,53 @@ function ReportsTab({ reports }) {
                   <tr key={row.label}>
                     <td>{capitalize(row.label)}</td>
                     <td className="report-num">{row.done}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </div>
+
+      {/* Detalhe das castrações com microchip */}
+      <div className="report-section">
+        <div className="report-section-header">
+          <h3 className="report-section-title"><KeyRound size={18} /> Detalhe das castrações — Microchip</h3>
+          <button className="button secondary small" type="button"
+            onClick={() => exportCsv(
+              castrationsDetail.map((r) => ({ ...r, microchip_fmt: r.microchip ? `${r.microchip.slice(0,15)} ${r.microchip.slice(15)}` : '' })),
+              ['protocol', 'tutor_name', 'animal_name', 'animal_type_label', 'breed', 'clinic', 'date', 'microchip_fmt'],
+              'castracoes-microchip.csv'
+            )}>
+            <Download size={15} /> Exportar CSV
+          </button>
+        </div>
+        {castrationsDetail.length === 0 ? <p className="muted">Nenhuma castração registrada como realizada.</p> : (
+          <div className="report-table-wrap">
+            <table className="report-table">
+              <thead>
+                <tr>
+                  <th>Protocolo</th>
+                  <th>Tutor</th>
+                  <th>Animal</th>
+                  <th>Raça</th>
+                  <th>Clínica</th>
+                  <th>Data</th>
+                  <th>Microchip</th>
+                </tr>
+              </thead>
+              <tbody>
+                {castrationsDetail.map((row) => (
+                  <tr key={row.protocol}>
+                    <td style={{fontFamily:'monospace', fontSize:'0.82rem'}}>{row.protocol}</td>
+                    <td>{row.tutor_name}</td>
+                    <td>{row.animal_name} · {row.animal_type_label}</td>
+                    <td>{row.breed || '—'}</td>
+                    <td>{row.clinic}</td>
+                    <td>{formatDate(row.date)}</td>
+                    <td style={{fontFamily:'monospace', letterSpacing:'0.05em'}}>
+                      {row.microchip ? `${row.microchip.slice(0, 15)} ${row.microchip.slice(15)}` : '—'}
+                    </td>
                   </tr>
                 ))}
               </tbody>
@@ -1893,15 +2002,27 @@ function AppointmentsTab({ appointments, reload, auth }) {
   const [savedMessage, setSavedMessage] = useState('');
 
   function draftFor(appointment) {
-    return drafts[appointment.id] || { status: appointment.status, reason: appointment.reason || '' };
+    return drafts[appointment.id] || { status: appointment.status, reason: appointment.reason || '', microchip: appointment.microchip || '' };
+  }
+
+  function formatMicrochip(value) {
+    const digits = value.replace(/\D/g, '').slice(0, 16);
+    return digits.length > 15 ? `${digits.slice(0, 15)} ${digits.slice(15)}` : digits;
   }
 
   async function save(appointment) {
     const draft = draftFor(appointment);
+    if (draft.status === 'realizado') {
+      const digits = (draft.microchip || '').replace(/\s/g, '');
+      if (!/^\d{16}$/.test(digits)) {
+        setError('Informe o microchip: 15 dígitos + 1 dígito verificador (16 dígitos no total).');
+        return;
+      }
+    }
     try {
       await request(`/admin/appointments/${appointment.id}/status`, {
         method: 'PATCH',
-        body: draft
+        body: { ...draft, microchip: (draft.microchip || '').replace(/\s/g, '') }
       }, auth.token);
       setDrafts((current) => {
         const next = { ...current };
@@ -1923,7 +2044,7 @@ function AppointmentsTab({ appointments, reload, auth }) {
       {error ? <InlineAlert message={error} /> : null}
       {savedMessage ? <div className="inline-success"><CheckCircle2 size={18} />{savedMessage}</div> : null}
       <DataTable
-        columns={['Nome', 'Contato', 'Animal', 'Horário', 'Documentos', 'Status', 'Motivo', 'Ação']}
+        columns={['Nome', 'Contato', 'Animal', 'Horário', 'Documentos', 'Status', 'Microchip', 'Motivo', 'Ação']}
         rows={appointments.map((appointment) => {
           const draft = draftFor(appointment);
           return [
@@ -1959,6 +2080,18 @@ function AppointmentsTab({ appointments, reload, auth }) {
               <option value="nao_realizado">Não realizado</option>
               <option value="cancelado">Cancelado</option>
             </select>,
+            draft.status === 'realizado'
+              ? <input
+                  key={`microchip-${appointment.id}`}
+                  className="table-input microchip-input"
+                  value={draft.microchip || ''}
+                  onChange={(event) => setDrafts({ ...drafts, [appointment.id]: { ...draft, microchip: formatMicrochip(event.target.value) } })}
+                  placeholder="000000000000000 0"
+                  maxLength={17}
+                  inputMode="numeric"
+                  title="15 dígitos + 1 dígito verificador"
+                />
+              : <span key={`microchip-${appointment.id}`} className="table-microchip-display">{appointment.microchip ? `${appointment.microchip.slice(0, 15)} ${appointment.microchip.slice(15)}` : '—'}</span>,
             <input
               key={`reason-${appointment.id}`}
               className="table-input"

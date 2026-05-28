@@ -124,6 +124,8 @@ export function initSchema() {
   ensureColumn('users', 'doc_cpf', 'TEXT');
   ensureColumn('users', 'doc_identidade', 'TEXT');
   ensureColumn('users', 'email', 'TEXT');
+  ensureColumn('appointments', 'microchip', 'TEXT');
+  db.exec(`CREATE UNIQUE INDEX IF NOT EXISTS idx_appointments_microchip ON appointments(microchip) WHERE microchip IS NOT NULL`);
 }
 
 export async function seedDatabase() {

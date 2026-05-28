@@ -216,6 +216,27 @@ app.get('/api/me', requireAuth, (req, res) => {
   });
 });
 
+app.put('/api/me/password', requireAuth, (req, res) => {
+  try {
+    const user = getUserById(req.user.id);
+    if (!['protetor', 'clinica'].includes(user.role)) {
+      throw httpError(403, 'Operação não permitida para este perfil.');
+    }
+    const { currentPassword, newPassword } = req.body;
+    if (!bcrypt.compareSync(String(currentPassword || ''), user.password_hash || '')) {
+      throw httpError(400, 'Senha atual incorreta.');
+    }
+    if (!newPassword || String(newPassword).length < 6) {
+      throw httpError(400, 'Nova senha deve ter pelo menos 6 caracteres.');
+    }
+    const hash = bcrypt.hashSync(String(newPassword), 12);
+    db.prepare('UPDATE users SET password_hash = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?').run(hash, user.id);
+    res.json({ success: true });
+  } catch (error) {
+    sendError(res, error);
+  }
+});
+
 app.post('/api/me/documents', requireAuth, (req, res, next) => {
   if (!['tutor', 'protetor'].includes(req.user.role)) {
     return res.status(403).json({ message: 'Apenas tutores e protetores podem enviar documentos.' });
@@ -377,7 +398,29 @@ app.get('/api/admin/reports', requireAdmin, (_req, res) => {
     label: animalTypeLabel(r.species, r.sex)
   }));
 
-  res.json({ totals, perDay, perClinic, castrationsByClinic, castrationsByType });
+  const castrationsDetail = db.prepare(`
+    SELECT
+      u.name AS tutor_name,
+      u.cpf AS tutor_cpf,
+      an.name AS animal_name,
+      an.species,
+      an.sex,
+      an.breed,
+      COALESCE(c.name, s.clinic) AS clinic,
+      s.date,
+      s.time,
+      a.protocol,
+      a.microchip
+    FROM appointments a
+    JOIN users u ON u.id = a.user_id
+    JOIN animals an ON an.id = a.animal_id
+    JOIN slots s ON s.id = a.slot_id
+    LEFT JOIN clinics c ON c.id = s.clinic_id
+    WHERE a.status = 'realizado'
+    ORDER BY s.date ASC, s.time ASC
+  `).all().map((r) => ({ ...r, animal_type_label: animalTypeLabel(r.species, r.sex) }));
+
+  res.json({ totals, perDay, perClinic, castrationsByClinic, castrationsByType, castrationsDetail });
 });
 
 app.get('/api/admin/clinics', requireAdmin, (_req, res) => {
@@ -580,8 +623,8 @@ app.get('/api/admin/appointments', requireAppointmentManager, (req, res) => {
 app.patch('/api/admin/appointments/:id/status', requireAppointmentManager, (req, res) => {
   try {
     assertCanManageAppointment(req.user, req.params.id);
-    const { status, reason } = req.body;
-    changeAppointmentStatus(req.params.id, status, reason, { allowCapacityOverride: req.user.role === 'admin' });
+    const { status, reason, microchip } = req.body;
+    changeAppointmentStatus(req.params.id, status, reason, { allowCapacityOverride: req.user.role === 'admin', microchip });
     res.json({ appointment: getAppointmentDetails(req.params.id) });
   } catch (error) {
     sendError(res, error);
@@ -769,7 +812,7 @@ async function sendConfirmationEmail(toEmail, userName, appointment) {
           </tr>
         </table>
         <div style="background:#fff8f0;border:1px solid #f0d0b0;border-radius:8px;padding:16px 20px;font-size:14px;color:#7a4010;margin-bottom:24px">
-          <strong>Lembre-se:</strong> leve <em>identidade, CPF e comprovante de residência originais</em> no dia da castração. Seu animal deve estar em jejum de 6 a 8 horas antes do procedimento.
+          <strong>Lembre-se:</strong> leve <em>cópias de identidade, CPF e comprovante de residência</em> no dia da castração. Seu animal deve estar em jejum de 6 a 8 horas antes do procedimento.
         </div>
         <p style="margin:0;font-size:13px;color:#5a5e8a">Em caso de dúvidas, entre em contato com a Secretaria Municipal de Defesa e Proteção dos Animais.</p>
       </div>
@@ -1063,6 +1106,7 @@ function listAppointments({ userId, clinicId, appointmentId } = {}) {
       a.id,
       a.status,
       a.reason,
+      a.microchip,
       a.protocol,
       a.created_at,
       u.id AS user_id,
@@ -1121,12 +1165,20 @@ function changeAppointmentStatus(id, status, reason = '', options = {}) {
   if (status === 'nao_realizado' && !normalizeText(reason)) {
     throw httpError(400, 'Informe o motivo da não realização.');
   }
+  const microchipRaw = String(options.microchip || '').replace(/\s/g, '');
+  if (status === 'realizado') {
+    if (!microchipRaw) throw httpError(400, 'Informe o número do microchip para confirmar a castração como realizada.');
+    if (!/^\d{16}$/.test(microchipRaw)) throw httpError(400, 'Microchip deve conter exatamente 15 dígitos + 1 dígito verificador (16 dígitos no total).');
+    const existing = db.prepare('SELECT id FROM appointments WHERE microchip = ? AND id != ?').get(microchipRaw, id);
+    if (existing) throw httpError(409, `Microchip ${microchipRaw.slice(0, 15)} ${microchipRaw.slice(15)} já registrado no agendamento #${existing.id}.`);
+  }
   const appointment = db.prepare('SELECT * FROM appointments WHERE id = ?').get(id);
   if (!appointment) throw httpError(404, 'Agendamento não encontrado.');
   if (appointment.status === status) {
     db.prepare('UPDATE appointments SET reason = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?').run(normalizeText(reason), id);
     return;
   }
+  const microchipValue = status === 'realizado' ? microchipRaw : null;
 
   db.exec('BEGIN IMMEDIATE');
   try {
@@ -1151,9 +1203,9 @@ function changeAppointmentStatus(id, status, reason = '', options = {}) {
     }
     db.prepare(`
       UPDATE appointments
-      SET status = ?, reason = ?, updated_at = CURRENT_TIMESTAMP
+      SET status = ?, reason = ?, microchip = COALESCE(?, microchip), updated_at = CURRENT_TIMESTAMP
       WHERE id = ?
-    `).run(status, normalizeText(reason), id);
+    `).run(status, normalizeText(reason), microchipValue, id);
     db.exec('COMMIT');
   } catch (error) {
     db.exec('ROLLBACK');

@@ -89,7 +89,7 @@ Campos relevantes:
 - `clinics`: clinicas cadastradas, endereco, bairro, telefone, active.
 - `slots`: vagas por data, hora, especie, sexo, clinica e quantidade.
 - `animals`: animais do usuario.
-- `appointments`: agendamentos, status, protocolo e aceite dos termos.
+- `appointments`: agendamentos, status, protocolo, aceite dos termos e `microchip TEXT` (preenchido ao confirmar como realizado).
 - `settings`: chaves internas de seed/importacao.
 
 ---
@@ -175,6 +175,22 @@ Comportamento atual:
 - Admin pode ver todas as clinicas ou filtrar uma clinica especifica.
 - O filtro usa `/api/admin/appointments?clinicId=ID`.
 
+### Troca de senha (protetor e clinica)
+
+- Endpoint `PUT /api/me/password` — restrito a roles `protetor` e `clinica`.
+- Exige senha atual (validada com bcrypt) e nova senha com minimo de 6 caracteres.
+- Disponivel como formulario colapsavel ("Alterar senha") no painel do protetor e no painel da clinica.
+- Admin nao ve esse formulario — usa o painel admin para alterar senhas de qualquer usuario.
+
+### Microchip obrigatorio ao confirmar castracao
+
+- Ao mudar status para `realizado`, o campo `microchip` e obrigatorio.
+- Formato: 16 digitos — 15 digitos do numero principal + 1 digito verificador.
+- O backend valida formato e unicidade antes do UPDATE (indice unico `idx_appointments_microchip`).
+- Duplicata retorna erro 409 com mensagem identificando o agendamento conflitante.
+- O microchip e exibido na tabela de agendamentos da clinica/admin.
+- O microchip aparece no relatorio de castracoes (PDF e CSV) na secao "Detalhe das castracoes realizadas".
+
 ### Protetor Cadastrado
 
 - O termo visivel padrao e `Protetor Cadastrado`.
@@ -202,6 +218,7 @@ Comportamento atual:
 | Metodo | Rota | Descricao |
 |--------|------|-----------|
 | GET | `/api/me` | Usuario logado, limite mensal e agendamentos |
+| PUT | `/api/me/password` | Troca de senha propria (protetor e clinica apenas) |
 | POST | `/api/appointments/auto` | Novo agendamento para tutor/protetor/admin |
 | POST | `/api/appointments/:id/cancel` | Cancelar agendamento proprio ou admin |
 
@@ -211,7 +228,7 @@ Comportamento atual:
 |--------|------|-----------|
 | GET | `/api/admin/appointments` | Admin ve todos; clinica ve apenas a vinculada |
 | GET | `/api/admin/appointments?clinicId=ID` | Admin filtra por clinica |
-| PATCH | `/api/admin/appointments/:id/status` | Atualiza status |
+| PATCH | `/api/admin/appointments/:id/status` | Atualiza status; status `realizado` exige campo `microchip` (16 digitos) |
 | GET/POST | `/api/admin/clinics` | Listar/criar clinicas |
 | PUT/DELETE | `/api/admin/clinics/:id` | Editar/desativar/excluir clinica |
 | GET/POST | `/api/admin/slots` | Listar/criar vagas |
@@ -260,6 +277,7 @@ Ao clicar em agendar:
 - Mostra usados no mes.
 - Admin aparece com limite `Ilimitado`.
 - Botao `Agendar castracao do animal`.
+- Protetor e clinica: formulario colapsavel "Alterar senha" disponivel no dashboard.
 
 ---
 
@@ -288,7 +306,7 @@ Demais regras mantidas:
 - Informar medicamentos ao veterinario.
 - Vacinados ha menos de 21 dias nao podem ser castrados.
 - Residencia obrigatoria em Nova Iguacu.
-- Levar identidade, CPF e comprovante de residencia de Nova Iguacu no dia.
+- Levar **copias** de identidade, CPF e comprovante de residencia de Nova Iguacu no dia.
 
 ---
 
@@ -321,12 +339,16 @@ Se o deploy usar `DB_PATH`, confirme que a variavel aponta para o banco correto 
 
 ### Migracao do banco em producao
 
-As mudancas recentes adicionaram campos em `users`:
+As mudancas recentes adicionaram colunas via `ensureColumn` em `server/db.js`:
 
+Em `users`:
 - `cep TEXT`
 - `address_number TEXT`
 
-O arquivo `server/db.js` chama `ensureColumn` na inicializacao, entao em um deploy normal o restart da aplicacao deve criar essas colunas automaticamente.
+Em `appointments`:
+- `microchip TEXT` — indice unico `idx_appointments_microchip` criado automaticamente
+
+O arquivo `server/db.js` chama `ensureColumn` e `CREATE UNIQUE INDEX IF NOT EXISTS` na inicializacao, entao o restart da aplicacao cria tudo automaticamente.
 
 Mesmo assim, em producao faca backup antes:
 
