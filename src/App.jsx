@@ -188,6 +188,7 @@ export default function App() {
       </main>
       <footer className="app-footer">
         <p>© 2026 Secretaria Municipal de Defesa e Proteção dos Animais. Horário de Funcionamento: De 09h às 17h. Todos os direitos reservados.</p>
+        <p style={{fontSize:'12px',marginTop:'6px',opacity:0.7}}>Desenvolvido pela Subsecretaria de Tecnologia da Informação de Nova Iguaçu – SEMUG.</p>
       </footer>
     </div>
   );
