@@ -79,6 +79,17 @@ const csvUpload = multer({
 });
 
 const app = express();
+app.set('trust proxy', 1);
+
+if (process.env.INTERNAL_TOKEN) {
+  app.use((req, res, next) => {
+    if (req.headers['x-internal-token'] !== process.env.INTERNAL_TOKEN) {
+      return res.status(403).json({ message: 'Forbidden' });
+    }
+    next();
+  });
+}
+
 app.use(helmet({
   crossOriginResourcePolicy: { policy: 'same-origin' },
   contentSecurityPolicy: {
