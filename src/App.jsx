@@ -14,6 +14,7 @@ import {
   Home,
   LogIn,
   LogOut,
+  MessageCircle,
   PawPrint,
   Plus,
   Save,
@@ -28,7 +29,10 @@ import {
 const emptyUser = {
   name: '',
   cpf: '',
+  cep: '',
   address: '',
+  addressNumber: '',
+  addressNumberMissing: false,
   neighborhood: '',
   phone: '',
   email: '',
@@ -103,7 +107,7 @@ export default function App() {
     setView('home');
   }
 
-  const title = view === 'admin' ? 'Área Administrativa' : view === 'protetor' ? 'Área do Protetor' : 'Castração Animal';
+  const title = view === 'admin' ? 'Área Administrativa' : view === 'protetor' ? 'Área do Protetor Cadastrado' : 'Castração Animal';
 
   return (
     <div className="app-shell">
@@ -117,9 +121,9 @@ export default function App() {
         </button>
         <nav className="top-actions" aria-label="Navegação principal">
           <IconButton icon={Home} label="Início" onClick={() => setView('home')} />
-          <IconButton icon={CalendarPlus} label="Inscrição" onClick={() => setView('inscricao')} primary />
+          <IconButton icon={CalendarPlus} label={auth ? 'Agendamento' : 'Cadastrar-se'} onClick={() => setView('inscricao')} primary />
           <IconButton icon={UserRound} label="Tutor" onClick={() => setView('usuario')} />
-          <IconButton icon={Shield} label="Protetor" onClick={() => setView('protetor')} />
+          <IconButton icon={Shield} label="Protetor Cadastrado" onClick={() => setView('protetor')} />
           <IconButton icon={ClipboardCheck} label="Clínica" onClick={() => setView('clinica')} />
           <IconButton icon={Building2} label="Admin" onClick={() => setView('admin')} />
           {auth ? <IconButton icon={LogOut} label="Sair" onClick={logout} /> : null}
@@ -136,12 +140,14 @@ export default function App() {
         {view === 'inscricao' ? (
           <Wizard
             auth={auth}
-            setAuth={setAuthState}
-            onDone={({ token, user: signedUser } = {}) => {
+            onDone={({ token, user: signedUser, appointment } = {}) => {
               if (token && signedUser) setAuthState(token, signedUser);
-              setView('usuario');
-              setNotice('Inscrição registrada com sucesso! Você já está logado na área do tutor.');
-              loadAvailability();
+              if (appointment) {
+                setNotice(`Agendamento confirmado! Protocolo ${appointment.protocol}.`);
+              } else {
+                setNotice('Cadastro concluído! Você já está logado na área do tutor. Agora faça o agendamento da castração do seu animal.');
+              }
+              setView(appointment && auth?.user?.role === 'admin' ? 'admin' : 'usuario');
               setTimeout(() => setNotice(''), 6000);
             }}
           />
@@ -164,7 +170,7 @@ export default function App() {
         ) : null}
 
         {view === 'clinica' ? (
-          auth?.user?.role === 'clinica' ? (
+          auth?.user?.role === 'clinica' || auth?.user?.role === 'admin' ? (
             <ClinicPanel auth={auth} />
           ) : (
             <LoginView title="Área da Clínica" expectedRole="clinica" destinationView="clinica" setAuth={setAuthState} setView={setView} />
@@ -203,20 +209,32 @@ function HomeView({ auth, setView }) {
             animal.
           </h1>
           <p className="ed-sub">
-            Cadastre-se, escolha uma clínica e receba agendamento automático — sem filas, sem burocracia.
+            Primeiro crie seu cadastro de tutor. Depois, na área logada, solicite o agendamento da castração do seu animal.
           </p>
+          <div className="ed-eligibility">
+            <Home size={18} />
+            <span>A castração gratuita pelo sistema é destinada somente a moradores de Nova Iguaçu.</span>
+          </div>
           <div className="ed-actions">
             <div className="ed-main-actions">
               <button className="button primary large" type="button" onClick={() => setView('inscricao')}>
-                <CalendarPlus size={20} /> Fazer inscrição
+                <CalendarPlus size={20} /> {auth ? 'Agendar castração' : 'Cadastrar-se'}
               </button>
               <button className="button secondary large" type="button" onClick={() => setView('usuario')}>
                 <LogIn size={20} /> Faça login como tutor
               </button>
             </div>
+            <a
+              className="button whatsapp large ed-protector-cta"
+              href="https://wa.me/552137663341"
+              target="_blank"
+              rel="noreferrer"
+            >
+              <MessageCircle size={20} /> Torne-se um Protetor Cadastrado
+            </a>
             <div className="ed-secondary-actions">
               <button className="button text" type="button" onClick={() => setView('protetor')}>
-                <Shield size={15} /> Protetor
+                <Shield size={15} /> Protetor Cadastrado
               </button>
               <span className="ed-dot" />
               <button className="button text" type="button" onClick={() => setView('clinica')}>
@@ -238,6 +256,9 @@ function HomeView({ auth, setView }) {
 
       <section className="ed-steps">
         <div className="ed-steps-label">Como funciona</div>
+        <p className="ed-steps-note">
+          Antes de se cadastrar, confirme que o tutor reside em Nova Iguaçu. O benefício gratuito é municipal e exclusivo para munícipes.
+        </p>
         <div className="ed-steps-grid">
           <div className="ed-step">
             <div className="ed-step-top">
@@ -245,8 +266,8 @@ function HomeView({ auth, setView }) {
               <div className="ed-step-num">01</div>
             </div>
             <div className="ed-step-rule" />
-            <strong>Cadastro</strong>
-            <p>Preencha os dados do tutor ou protetor e do animal a ser castrado.</p>
+            <strong>Cadastro do tutor</strong>
+            <p>Preencha seus dados, confirme residência em Nova Iguaçu e aceite os termos do programa municipal.</p>
           </div>
           <div className="ed-step">
             <div className="ed-step-top">
@@ -254,8 +275,8 @@ function HomeView({ auth, setView }) {
               <div className="ed-step-num">02</div>
             </div>
             <div className="ed-step-rule" />
-            <strong>Escolha a clínica</strong>
-            <p>Selecione a clínica de preferência. O horário é atribuído automaticamente.</p>
+            <strong>Área do tutor</strong>
+            <p>Após concluir o cadastro, entre logado para informar o animal e escolher uma clínica com vaga disponível.</p>
           </div>
           <div className="ed-step">
             <div className="ed-step-top">
@@ -263,8 +284,8 @@ function HomeView({ auth, setView }) {
               <div className="ed-step-num">03</div>
             </div>
             <div className="ed-step-rule" />
-            <strong>Agendamento automático</strong>
-            <p>Receba na hora a data e horário disponíveis na clínica escolhida.</p>
+            <strong>Confirmação automática</strong>
+            <p>Depois de confirmar, o protocolo, a clínica, a data e o horário ficam salvos na área do tutor.</p>
           </div>
         </div>
       </section>
@@ -272,13 +293,35 @@ function HomeView({ auth, setView }) {
   );
 }
 
-function Wizard({ auth, setAuth, onDone }) {
+function Wizard({ auth, onDone }) {
+  const isRegistrationFlow = !auth;
+  const stepTitles = isRegistrationFlow
+    ? ['Dados do cidadão', 'Termos e aceite']
+    : ['Usuário logado', 'Termos e regras', 'Dados do animal', 'Escolher clínica', 'Confirmação'];
+  const stepLabels = isRegistrationFlow
+    ? ['Dados', 'Termos']
+    : ['Tutor', 'Termos', 'Animal', 'Clínica', 'Confirmar'];
+  const stepDescriptions = isRegistrationFlow
+    ? [
+        'Crie seu acesso como tutor. O cadastro é exclusivo para moradores e munícipes de Nova Iguaçu.',
+        'Leia as regras do programa e aceite os termos para concluir seu cadastro. O agendamento do animal será feito depois, na área do tutor.'
+      ]
+    : [
+        'Seu cadastro já está ativo. Agora siga os próximos passos para solicitar a castração do animal.',
+        'Revise os requisitos do programa antes de solicitar o agendamento.',
+        'Informe os dados do animal que será avaliado para a castração.',
+        'Escolha uma clínica com vaga disponível. O sistema atribui automaticamente o primeiro horário compatível.',
+        'Confira os dados antes de confirmar o agendamento.'
+      ];
+  const totalSteps = stepTitles.length;
   const [step, setStep] = useState(1);
-  const [role, setRole] = useState(auth?.user?.role === 'protetor' ? 'protetor' : 'tutor');
   const [user, setUser] = useState(() => auth?.user ? {
     name: auth.user.name || '',
     cpf: auth.user.cpf || '',
+    cep: auth.user.cep || '',
     address: auth.user.address || '',
+    addressNumber: auth.user.address_number || '',
+    addressNumberMissing: auth.user.address_number === 'S/N',
     neighborhood: auth.user.neighborhood || '',
     phone: auth.user.phone || '',
     password: '',
@@ -292,17 +335,53 @@ function Wizard({ auth, setAuth, onDone }) {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
   const [cpfRegistrationError, setCpfRegistrationError] = useState('');
+  const [cepLookup, setCepLookup] = useState({ loading: false, error: '', success: '' });
   const [validationAttempted, setValidationAttempted] = useState(false);
   const [result, setResult] = useState(null);
 
-  const stepTitle = ['Dados do tutor', 'Termos e regras', 'Dados do animal', 'Escolher clínica', 'Confirmação'][step - 1];
+  const stepTitle = stepTitles[step - 1];
+  const stepDescription = stepDescriptions[step - 1];
   const cpfDigits = onlyDigits(user.cpf);
+  const cepDigits = onlyDigits(user.cep);
   const cpfError = getCpfValidationMessage(user.cpf) || cpfRegistrationError;
-  const showStepOneFieldErrors = validationAttempted && step === 1 && !auth;
+  const cepError = cepLookup.error || (validationAttempted && step === 1 && cepDigits.length !== 8 ? 'Informe um CEP válido com 8 dígitos.' : '');
+  const showStepOneFieldErrors = validationAttempted && step === 1 && isRegistrationFlow;
+
+  useEffect(() => {
+    if (!isRegistrationFlow) return;
+    if (cepDigits.length !== 8) {
+      setCepLookup({ loading: false, error: '', success: '' });
+      return;
+    }
+
+    let cancelled = false;
+    setCepLookup({ loading: true, error: '', success: '' });
+    request(`/public/cep/${cepDigits}`)
+      .then((data) => {
+        if (cancelled) return;
+        setUser((current) => {
+          if (onlyDigits(current.cep) !== cepDigits) return current;
+          return {
+            ...current,
+            address: data.address?.street || current.address,
+            neighborhood: data.address?.neighborhood || current.neighborhood
+          };
+        });
+        setCepLookup({ loading: false, error: '', success: 'Endereço encontrado em Nova Iguaçu.' });
+      })
+      .catch((err) => {
+        if (!cancelled) setCepLookup({ loading: false, error: err.message, success: '' });
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [cepDigits, isRegistrationFlow]);
 
   function updateUser(field, value) {
     setError('');
     if (field === 'cpf') setCpfRegistrationError('');
+    if (field === 'cep') setCepLookup({ loading: false, error: '', success: '' });
     setUser((current) => ({ ...current, [field]: value }));
   }
 
@@ -317,8 +396,9 @@ function Wizard({ auth, setAuth, onDone }) {
     try {
       const data = await request(`/clinics/available?species=${animal.species}&sex=${animal.sex}`);
       const list = data.clinics || [];
+      const clinicsWithSlots = list.filter((clinic) => Number(clinic.available_slots || 0) > 0);
       setClinics(list);
-      if (list.length === 1) setSelectedClinicId(list[0].id);
+      if (clinicsWithSlots.length === 1) setSelectedClinicId(clinicsWithSlots[0].id);
     } catch (_err) {
       setClinics([]);
     } finally {
@@ -327,17 +407,20 @@ function Wizard({ auth, setAuth, onDone }) {
   }
 
   function validateStep(targetStep = step) {
-    if (targetStep === 1 && !auth) {
-      if (!user.name || !user.address || !user.neighborhood || !user.phone) return 'Preencha todos os campos obrigatórios da etapa do tutor.';
+    if (targetStep === 1 && isRegistrationFlow) {
+      if (!user.name || !user.cep || !user.address || (!user.addressNumber && !user.addressNumberMissing) || !user.neighborhood || !user.phone) return 'Preencha todos os campos obrigatórios da etapa do tutor.';
       if (cpfError) return cpfError;
+      if (cepDigits.length !== 8) return 'Informe um CEP válido com 8 dígitos.';
+      if (cepLookup.loading) return 'Aguarde a consulta do CEP para continuar.';
+      if (cepLookup.error) return cepLookup.error;
       if (user.password.length < PASSWORD_MIN_LENGTH) return `A senha de acesso deve ter pelo menos ${PASSWORD_MIN_LENGTH} caracteres para ser criada.`;
       if (!user.cityAdultConfirmed) return 'Confirme que reside em Nova Iguaçu e é maior de 18 anos.';
     }
     if (targetStep === 2 && (!terms.requirementsAccepted || !terms.documentsAccepted)) return 'Aceite os termos e confirme os documentos para continuar.';
-    if (targetStep === 3 && !animal.name) return 'Informe o nome do animal.';
-    if (targetStep === 3 && !animal.breed) return 'Informe a raça do animal.';
-    if (targetStep === 3 && !animal.approximateAge) return 'Informe a idade aproximada do animal.';
-    if (targetStep === 4 && !selectedClinicId) return 'Selecione uma clínica disponível para continuar.';
+    if (!isRegistrationFlow && targetStep === 3 && !animal.name) return 'Informe o nome do animal.';
+    if (!isRegistrationFlow && targetStep === 3 && !animal.breed) return 'Informe a raça do animal.';
+    if (!isRegistrationFlow && targetStep === 3 && !animal.approximateAge) return 'Informe a idade aproximada do animal.';
+    if (!isRegistrationFlow && targetStep === 4 && !selectedClinicId) return 'Selecione uma clínica disponível para continuar.';
     return '';
   }
 
@@ -356,7 +439,7 @@ function Wizard({ auth, setAuth, onDone }) {
       setError(message);
       return;
     }
-    if (step === 1 && !auth) {
+    if (step === 1 && isRegistrationFlow) {
       setLoading(true);
       try {
         const cpfMessage = await checkCpfRegistration();
@@ -374,7 +457,7 @@ function Wizard({ auth, setAuth, onDone }) {
     }
     setError('');
     setValidationAttempted(false);
-    if (step === 3) {
+    if (!isRegistrationFlow && step === 3) {
       setStep(4);
       loadClinics();
     } else {
@@ -383,7 +466,7 @@ function Wizard({ auth, setAuth, onDone }) {
   }
 
   async function submit() {
-    const invalidStep = [1, 2, 3, 4].find((candidate) => validateStep(candidate));
+    const invalidStep = Array.from({ length: totalSteps }, (_item, index) => index + 1).find((candidate) => validateStep(candidate));
     if (invalidStep) {
       setValidationAttempted(true);
       setStep(invalidStep);
@@ -393,16 +476,13 @@ function Wizard({ auth, setAuth, onDone }) {
     setLoading(true);
     setError('');
     try {
-      let appointment;
-      if (auth) {
-        const data = await request('/appointments/auto', { method: 'POST', body: { animal, terms, clinicId: selectedClinicId } }, auth.token);
-        appointment = data.appointment;
-      } else {
-        const data = await request('/public/inscricao', { method: 'POST', body: { user, role, animal, terms, clinicId: selectedClinicId } });
-        appointment = data.appointment;
-        onDone({ token: data.token, user: data.user, appointment });
+      if (isRegistrationFlow) {
+        const data = await request('/auth/register', { method: 'POST', body: { user, role: 'tutor', terms } });
+        onDone({ token: data.token, user: data.user });
         return;
       }
+      const data = await request('/appointments/auto', { method: 'POST', body: { animal, terms, clinicId: selectedClinicId } }, auth.token);
+      const appointment = data.appointment;
       setResult(appointment);
       onDone({ appointment });
     } catch (err) {
@@ -415,12 +495,13 @@ function Wizard({ auth, setAuth, onDone }) {
   return (
     <section className="wiz-shell">
       <div>
-        <span className="wiz-eyebrow">Etapa {step} de 5</span>
+        <span className="wiz-eyebrow">Etapa {step} de {totalSteps}</span>
         <h2>{stepTitle}</h2>
+        {stepDescription ? <p className="wiz-description">{stepDescription}</p> : null}
       </div>
 
 
-      <Stepper current={step} total={5} />
+      <Stepper current={step} total={totalSteps} labels={stepLabels} />
 
       {error ? <InlineAlert message={error} /> : null}
 
@@ -434,14 +515,10 @@ function Wizard({ auth, setAuth, onDone }) {
                 <div className="wiz-form-grid">
                   {!auth ? (
                     <>
-                      <label className="field span-2">
-                        <span>Perfil</span>
-                        <select value={role} onChange={(event) => setRole(event.target.value)}>
-                          <option value="tutor">Tutor</option>
-                          <option value="protetor">Protetor cadastrado</option>
-                        </select>
-                        {role === 'protetor' ? <small>O CPF precisa constar na lista de protetores cadastrados pela administração.</small> : null}
-                      </label>
+                      <div className="wiz-step-note span-2">
+                        <AlertCircle size={18} />
+                        <span>Este cadastro é para o cidadão/tutor. Depois de concluir, você entrará automaticamente na área do tutor para solicitar a castração do animal.</span>
+                      </div>
                       <TextField label="Nome completo" value={user.name} onChange={(value) => updateUser('name', value)} required />
                       <TextField
                         label="CPF"
@@ -453,10 +530,32 @@ function Wizard({ auth, setAuth, onDone }) {
                         error={showStepOneFieldErrors ? cpfError : ''}
                         required
                       />
-                      <TextField label="Endereço Completo" value={user.address} onChange={(value) => updateUser('address', value)} required />
+                      <TextField
+                        label="CEP"
+                        value={user.cep}
+                        onChange={(value) => updateUser('cep', onlyDigits(value).slice(0, 8))}
+                        inputMode="numeric"
+                        maxLength={8}
+                        hint={cepLookup.loading ? 'Buscando endereço...' : cepLookup.success || 'Somente números, 8 dígitos'}
+                        error={showStepOneFieldErrors || cepLookup.error ? cepError : ''}
+                        required
+                      />
+                      <TextField label="Endereço" value={user.address} onChange={(value) => updateUser('address', value)} required />
+                      <TextField label="Número da residência" value={user.addressNumber} onChange={(value) => updateUser('addressNumber', value)} required={!user.addressNumberMissing} disabled={user.addressNumberMissing} />
+                      <label className="check-row compact-check number-missing-row">
+                        <input
+                          type="checkbox"
+                          checked={user.addressNumberMissing}
+                          onChange={(event) => {
+                            updateUser('addressNumberMissing', event.target.checked);
+                            if (event.target.checked) updateUser('addressNumber', '');
+                          }}
+                        />
+                        <span>Sem número</span>
+                      </label>
                       <TextField label="Bairro" value={user.neighborhood} onChange={(value) => updateUser('neighborhood', value)} required />
                       <TextField label="Telefone" value={user.phone} onChange={(value) => updateUser('phone', value)} required />
-                      <TextField label="E-mail" value={user.email} onChange={(value) => updateUser('email', value)} type="email" hint="Você receberá a confirmação da inscrição por e-mail" />
+                      <TextField label="E-mail" value={user.email} onChange={(value) => updateUser('email', value)} type="email" hint="Use um e-mail de contato, se tiver" />
                       <TextField
                         label={`Senha de acesso (mínimo ${PASSWORD_MIN_LENGTH} caracteres)`}
                         value={user.password}
@@ -467,13 +566,19 @@ function Wizard({ auth, setAuth, onDone }) {
                       />
                     </>
                   ) : (
-                    <div className="signed-box span-2">
-                      <UserRound size={24} />
-                      <div>
-                        <strong>{auth.user.name}</strong>
-                        <span>{auth.user.role === 'protetor' ? 'Protetor animal' : 'Tutor'} cadastrado com CPF {maskCpf(auth.user.cpf)}</span>
+                    <>
+                      <div className="signed-box span-2">
+                        <UserRound size={24} />
+                        <div>
+                          <strong>{auth.user.name}</strong>
+                          <span>{userRoleLabel(auth.user.role)} cadastrado com CPF {maskCpf(auth.user.cpf)}</span>
+                        </div>
                       </div>
-                    </div>
+                      <div className="wiz-step-note span-2">
+                        <CalendarPlus size={18} />
+                        <span>Você já está logado. Continue para revisar as regras e informar o animal que será agendado.</span>
+                      </div>
+                    </>
                   )}
                   <label className="check-row span-2">
                     <input
@@ -489,8 +594,16 @@ function Wizard({ auth, setAuth, onDone }) {
 
               {step === 2 ? (
                 <div className="wiz-terms">
+                  <div className="wiz-step-note">
+                    <AlertCircle size={18} />
+                    <span>
+                      {isRegistrationFlow
+                        ? 'Ao aceitar os termos, seu cadastro de tutor será concluído. O pedido de castração será feito em seguida, dentro da área logada.'
+                        : 'Estes termos serão vinculados ao agendamento. Leia com atenção antes de escolher o animal e a clínica.'}
+                    </span>
+                  </div>
                   {[
-                    'Tutor pode realizar 1 agendamento a cada 30 dias; protetor cadastrado pode realizar até 4 agendamentos a cada 30 dias.',
+                    'Tutor pode realizar 1 agendamento por mês; Protetor Cadastrado pode realizar até 4 agendamentos por mês; Administrador pode realizar agendamentos sem limite.',
                     'Chegue no horário informado e permaneça na clínica durante todo o procedimento. O responsável deve estar preparado para transportar o animal sonolento após a cirurgia.',
                     'Cães: coleira, guia e focinheira (se necessário). Gatos: 1 por caixa de transporte.',
                     'Banho no dia anterior ao procedimento, sem pulgas ou carrapatos.',
@@ -519,7 +632,7 @@ function Wizard({ auth, setAuth, onDone }) {
                         checked={terms.requirementsAccepted}
                         onChange={(event) => setTerms((current) => ({ ...current, requirementsAccepted: event.target.checked }))}
                       />
-                      <span>Li e aceito os requisitos</span>
+                      <span>Li e aceito os requisitos do programa municipal</span>
                     </label>
                     <label className="check-row">
                       <input
@@ -527,7 +640,7 @@ function Wizard({ auth, setAuth, onDone }) {
                         checked={terms.documentsAccepted}
                         onChange={(event) => setTerms((current) => ({ ...current, documentsAccepted: event.target.checked }))}
                       />
-                      <span>Entendo que devo levar os documentos originais ao posto no dia</span>
+                      <span>Entendo que devo levar os documentos obrigatórios no dia da castração</span>
                     </label>
                   </div>
                 </div>
@@ -535,6 +648,10 @@ function Wizard({ auth, setAuth, onDone }) {
 
               {step === 3 ? (
                 <div className="wiz-animal-grid">
+                  <div className="wiz-step-note">
+                    <PawPrint size={18} />
+                    <span>Informe um animal por agendamento. Os dados de espécie e sexo determinam quais clínicas têm vaga disponível.</span>
+                  </div>
                   <div className="wiz-pickers-row">
                     <div className="wiz-picker">
                       <span className="wiz-picker-label">Espécie</span>
@@ -573,31 +690,38 @@ function Wizard({ auth, setAuth, onDone }) {
 
               {step === 4 ? (
                 <div className="wiz-clinic-step">
-                  <p className="wiz-clinic-hint">Escolha a clínica onde deseja ser atendido. O horário será definido automaticamente conforme as vagas disponíveis.</p>
+                  <p className="wiz-clinic-hint">Escolha a clínica onde deseja ser atendido. Clínicas sem vaga aparecem na lista, mas ficam indisponíveis para seleção neste momento.</p>
                   {clinicsLoading ? (
                     <Loading label="Buscando clínicas disponíveis…" />
                   ) : clinics.length === 0 ? (
                     <div className="wiz-no-clinics">
                       <AlertCircle size={20} />
-                      <span>Nenhuma clínica com vagas disponíveis para {animalLabel(animal.species, animal.sex)} no momento.</span>
+                      <span>Nenhuma clínica ativa encontrada no sistema.</span>
                     </div>
                   ) : (
                     <div className="wiz-clinic-list">
-                      {clinics.map((clinic) => (
-                        <button
-                          key={clinic.id}
-                          type="button"
-                          className={`wiz-clinic-opt ${selectedClinicId === clinic.id ? 'active' : ''}`}
-                          onClick={() => setSelectedClinicId(clinic.id)}
-                        >
-                          <Building2 size={20} />
-                          <div className="wiz-clinic-info">
-                            <strong>{clinic.name}</strong>
-                            <span>{clinic.address}</span>
-                          </div>
-                          <span className="wiz-clinic-slots">{clinic.available_slots} vaga{clinic.available_slots !== 1 ? 's' : ''}</span>
-                        </button>
-                      ))}
+                      {clinics.map((clinic) => {
+                        const availableSlots = Number(clinic.available_slots || 0);
+                        const hasSlots = availableSlots > 0;
+                        return (
+                          <button
+                            key={clinic.id}
+                            type="button"
+                            className={`wiz-clinic-opt ${selectedClinicId === clinic.id ? 'active' : ''} ${hasSlots ? '' : 'unavailable'}`}
+                            onClick={() => hasSlots && setSelectedClinicId(clinic.id)}
+                            disabled={!hasSlots}
+                          >
+                            <Building2 size={20} />
+                            <div className="wiz-clinic-info">
+                              <strong>{clinic.name}</strong>
+                              <span>{clinic.address}</span>
+                            </div>
+                            <span className={`wiz-clinic-slots ${hasSlots ? '' : 'empty'}`}>
+                              {hasSlots ? `${availableSlots} vaga${availableSlots !== 1 ? 's' : ''}` : 'Sem vagas disponíveis no momento'}
+                            </span>
+                          </button>
+                        );
+                      })}
                     </div>
                   )}
                 </div>
@@ -608,10 +732,10 @@ function Wizard({ auth, setAuth, onDone }) {
                   <div className="wiz-confirm-icon">
                     <ClipboardCheck size={30} />
                   </div>
-                  <h3>Confirme sua inscrição</h3>
-                  <p>A clínica escolhida atribuirá automaticamente o primeiro horário compatível. Lembre-se de levar as cópias dos documentos no dia.</p>
+                  <h3>Confirme o agendamento</h3>
+                  <p>Depois de confirmar, o agendamento aparecerá na sua área do tutor com protocolo, clínica, data e horário. Lembre-se de levar as cópias dos documentos no dia.</p>
                   <div className="wiz-review-grid">
-                    <span>Perfil</span><strong>{auth?.user?.role === 'protetor' || role === 'protetor' ? 'Protetor animal' : 'Tutor'}</strong>
+                    <span>Perfil</span><strong>{userRoleLabel(auth?.user?.role)}</strong>
                     <span>Animal</span><strong>{animal.name} · {animalLabel(animal.species, animal.sex)}</strong>
                     <span>Raça e idade</span><strong>{animal.breed} · {animal.approximateAge}</strong>
                     <span>Clínica</span><strong>{clinics.find((c) => c.id === selectedClinicId)?.name || '—'}</strong>
@@ -625,13 +749,14 @@ function Wizard({ auth, setAuth, onDone }) {
             <button className="button ghost" type="button" onClick={() => setStep((value) => Math.max(1, value - 1))} disabled={step === 1 || loading}>
               Voltar
             </button>
-            {step < 5 ? (
+            {step < totalSteps ? (
               <button className="button primary" type="button" onClick={nextStep} disabled={loading}>
                 {loading && step === 1 ? 'Verificando...' : 'Continuar'}
               </button>
             ) : (
               <button className="button primary" type="button" onClick={submit} disabled={loading}>
-                <CalendarPlus size={18} /> {loading ? 'Agendando...' : 'Confirmar inscrição'}
+                {isRegistrationFlow ? <UserPlus size={18} /> : <CalendarPlus size={18} />}
+                {loading ? (isRegistrationFlow ? 'Cadastrando...' : 'Agendando...') : (isRegistrationFlow ? 'Concluir cadastro' : 'Confirmar agendamento')}
               </button>
             )}
           </div>
@@ -657,7 +782,7 @@ function LoginView({ title, expectedRole, destinationView, setAuth, setView }) {
         throw new Error('Use a área administrativa para este CPF.');
       }
       if (expectedRole && expectedRole !== 'usuario' && data.user.role !== expectedRole) {
-        throw new Error(expectedRole === 'admin' ? 'Este CPF não possui acesso administrativo.' : 'Este CPF não está como protetor.');
+        throw new Error(expectedRole === 'admin' ? 'Este CPF não possui acesso administrativo.' : 'Este CPF não está como Protetor Cadastrado.');
       }
       setAuth(data.token, data.user);
       setView(destinationView || (expectedRole === 'admin' ? 'admin' : 'protetor'));
@@ -686,7 +811,7 @@ function LoginView({ title, expectedRole, destinationView, setAuth, setView }) {
         </button>
         {expectedRole === 'protetor' ? (
           <p className="muted">
-            Primeiro acesso de protetor cadastrado: faça a inscrição escolhendo o perfil "Protetor cadastrado" e defina sua senha.
+            Primeiro acesso de Protetor Cadastrado: solicite orientação pelo botão "Torne-se um Protetor Cadastrado" na página inicial ou pela administração do programa.
           </p>
         ) : expectedRole === 'clinica' ? (
           <p className="muted">Acesso restrito para clínicas cadastradas pela administração.</p>
@@ -753,23 +878,41 @@ function UserDashboard({ auth, setView }) {
   if (!data) return <Loading label="Carregando área do usuário" />;
 
   const firstName = data.user.name ? data.user.name.split(' ')[0] : '';
+  const limitLabel = data.limit === null ? 'Ilimitado' : data.limit;
 
   return (
     <section className="dashboard-layout">
       <div className="section-title">
-        <span className="eyebrow">{data.user.role === 'protetor' ? 'Protetor animal' : 'Tutor'}</span>
+        <span className="eyebrow">{userRoleLabel(data.user.role)}</span>
         <h2>Olá, {firstName}</h2>
+        <p>
+          Seu cadastro está ativo. Para solicitar a castração, clique em agendar, informe os dados do animal e escolha uma clínica com vaga disponível.
+        </p>
       </div>
       <div className="metric-row">
-        <Metric icon={Calendar} label="Limite (30 dias)" value={data.limit} />
-        <Metric icon={CheckCircle2} label="Usados (30 dias)" value={data.currentMonthUsed} />
+        <Metric icon={Calendar} label="Limite mensal" value={limitLabel} />
+        <Metric icon={CheckCircle2} label="Usados no mês" value={data.currentMonthUsed} />
+      </div>
+      <div className="dashboard-guide">
+        <div>
+          <strong>1. Inicie o agendamento</strong>
+          <span>Use o botão abaixo somente quando tiver os dados do animal em mãos.</span>
+        </div>
+        <div>
+          <strong>2. Informe o animal</strong>
+          <span>Espécie e sexo definem quais vagas aparecem para escolha.</span>
+        </div>
+        <div>
+          <strong>3. Confirme a clínica</strong>
+          <span>Após confirmar, o protocolo, data e horário ficarão salvos nesta área.</span>
+        </div>
       </div>
       <div className="doc-required-notice">
         <AlertCircle size={18} />
         <span><strong>Documentos obrigatórios no posto:</strong> leve cópias de identidade, CPF e comprovante de residência de Nova Iguaçu no dia da castração.</span>
       </div>
       <button className="button primary" type="button" onClick={() => setView('inscricao')}>
-        <CalendarPlus size={18} /> Novo agendamento
+        <CalendarPlus size={18} /> Agendar castração do animal
       </button>
       <div className="appointment-list">
         {data.appointments.length ? data.appointments.map((appointment) => (
@@ -798,13 +941,17 @@ function UserDashboard({ auth, setView }) {
 
 function ClinicPanel({ auth }) {
   const [appointments, setAppointments] = useState([]);
+  const [clinics, setClinics] = useState([]);
+  const [selectedClinicId, setSelectedClinicId] = useState('');
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(true);
+  const isAdmin = auth.user.role === 'admin';
 
   async function loadAppointments() {
     setLoading(true);
     try {
-      const data = await request('/admin/appointments', {}, auth.token);
+      const query = isAdmin && selectedClinicId ? `?clinicId=${selectedClinicId}` : '';
+      const data = await request(`/admin/appointments${query}`, {}, auth.token);
       setAppointments(data.appointments || []);
       setError('');
     } catch (err) {
@@ -814,17 +961,45 @@ function ClinicPanel({ auth }) {
     }
   }
 
+  async function loadClinics() {
+    if (!isAdmin) return;
+    try {
+      const data = await request('/admin/clinics', {}, auth.token);
+      setClinics(data.clinics || []);
+    } catch (err) {
+      setError(err.message);
+    }
+  }
+
+  useEffect(() => {
+    loadClinics();
+  }, []);
+
   useEffect(() => {
     loadAppointments();
-  }, []);
+  }, [selectedClinicId]);
 
   return (
     <section className="admin-layout">
       <div className="section-title">
-        <span className="eyebrow">Clínica</span>
+        <span className="eyebrow">{isAdmin ? 'Admin · Clínica' : 'Clínica'}</span>
         <h2>Agendamentos</h2>
+        {isAdmin ? <p>Escolha uma clínica para visualizar os agendamentos dela, ou mantenha todas selecionadas.</p> : null}
       </div>
       {error ? <InlineAlert message={error} /> : null}
+      {isAdmin ? (
+        <div className="clinic-selector-bar">
+          <label className="field">
+            <span>Clínica</span>
+            <select value={selectedClinicId} onChange={(event) => setSelectedClinicId(event.target.value)}>
+              <option value="">Todas as clínicas</option>
+              {clinics.map((clinic) => (
+                <option key={clinic.id} value={clinic.id}>{clinic.name}</option>
+              ))}
+            </select>
+          </label>
+        </div>
+      ) : null}
       {loading ? <Loading label="Carregando agendamentos" /> : (
         <AppointmentsTab appointments={appointments} reload={loadAppointments} auth={auth} />
       )}
@@ -885,7 +1060,7 @@ function AdminPanel({ auth }) {
           ['slots', Calendar, 'Vagas'],
           ['appointments', ClipboardCheck, 'Agendamentos'],
           ['users', Users, 'Usuários'],
-          ['protectors', Shield, 'Protetores'],
+          ['protectors', Shield, 'Protetores Cadastrados'],
           ['reports', BarChart2, 'Relatórios']
         ].map(([key, Icon, label]) => (
           <button className={tab === key ? 'active' : ''} type="button" key={key} onClick={() => setTab(key)}>
@@ -1187,7 +1362,7 @@ function AdminSummary({ summary, reports }) {
         <Metric icon={CheckCircle2} label="Vagas preenchidas" value={summary.slots.occupied} />
         <Metric icon={AlertCircle} label="Disponíveis" value={summary.slots.available} />
         <Metric icon={XCircle} label="Não realizados" value={summary.appointments.nao_realizado || 0} />
-        <Metric icon={Shield} label="Protetores" value={summary.users.protetor || 0} />
+        <Metric icon={Shield} label="Protetores Cadastrados" value={summary.users.protetor || 0} />
         <Metric icon={UserRound} label="Tutores" value={summary.users.tutor || 0} />
       </div>
 
@@ -1807,7 +1982,7 @@ function UsersTab({ users, clinics, reload, auth }) {
 
 function ProtectorsTab({ protectors, clinics, reload, auth }) {
   const mapped = protectors.map((item) => ({ ...item, role: 'protetor' }));
-  return <UserManager title="Protetores cadastrados" users={mapped} clinics={clinics} reload={reload} auth={auth} defaultRole="protetor" />;
+  return <UserManager title="Protetores Cadastrados" users={mapped} clinics={clinics} reload={reload} auth={auth} defaultRole="protetor" />;
 }
 
 const PAGE_SIZE = 20;
@@ -1991,7 +2166,7 @@ function UserManager({ title, users, clinics, reload, auth, defaultRole }) {
           <span>Tipo</span>
           <select value={form.role} onChange={(event) => setForm({ ...form, role: event.target.value })}>
             <option value="tutor">Tutor</option>
-            <option value="protetor">Protetor</option>
+            <option value="protetor">Protetor Cadastrado</option>
             <option value="clinica">Clínica</option>
             <option value="admin">Admin</option>
           </select>
@@ -2044,7 +2219,7 @@ function UserManager({ title, users, clinics, reload, auth, defaultRole }) {
           <select value={filters.role} onChange={(event) => setFilters({ ...filters, role: event.target.value })}>
             <option value="">Todos</option>
             <option value="tutor">Tutor</option>
-            <option value="protetor">Protetor</option>
+            <option value="protetor">Protetor Cadastrado</option>
             <option value="clinica">Clínica</option>
             <option value="admin">Admin</option>
           </select>
@@ -2116,8 +2291,8 @@ function UserManager({ title, users, clinics, reload, auth, defaultRole }) {
   );
 }
 
-function Stepper({ current, total = 4 }) {
-  const labels = ['Tutor', 'Termos', 'Animal', 'Clínica', 'Confirmar'];
+function Stepper({ current, total = 4, labels = [] }) {
+  const fallbackLabels = ['Tutor', 'Termos', 'Animal', 'Clínica', 'Confirmar'];
   const steps = Array.from({ length: total }, (_, i) => i + 1);
   const items = [];
   steps.forEach((num, idx) => {
@@ -2128,7 +2303,7 @@ function Stepper({ current, total = 4 }) {
         <div className="wiz-node-circle">
           {isDone ? <CheckCircle2 size={14} strokeWidth={2.5} /> : num}
         </div>
-        <span className="wiz-node-label">{labels[idx] || num}</span>
+        <span className="wiz-node-label">{labels[idx] || fallbackLabels[idx] || num}</span>
       </div>
     );
     if (idx < steps.length - 1) {
@@ -2164,7 +2339,7 @@ function ResultPanel({ appointment }) {
   );
 }
 
-function TextField({ label, value, onChange, type = 'text', required = false, hint, error = '', inputMode, maxLength }) {
+function TextField({ label, value, onChange, type = 'text', required = false, hint, error = '', inputMode, maxLength, disabled = false }) {
   return (
     <label className="field">
       <span>{label}{required ? ' *' : ''}</span>
@@ -2176,6 +2351,7 @@ function TextField({ label, value, onChange, type = 'text', required = false, hi
         inputMode={inputMode}
         maxLength={maxLength}
         aria-invalid={Boolean(error)}
+        disabled={disabled}
       />
       {error ? <small className="field-error">{error}</small> : null}
       {!error && hint ? <small className="field-hint">{hint}</small> : null}
@@ -2267,6 +2443,12 @@ function animalLabel(species, sex) {
   if (species === 'gato') return 'gato';
   if (sex === 'femea') return 'cadela';
   return 'cão';
+}
+
+function userRoleLabel(role) {
+  if (role === 'admin') return 'Administrador';
+  if (role === 'protetor') return 'Protetor Cadastrado';
+  return 'Tutor';
 }
 
 function normalizeSearch(value = '') {

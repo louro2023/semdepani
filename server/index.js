@@ -43,7 +43,6 @@ const JWT_SECRET = process.env.JWT_SECRET || (isDev ? 'dev-secret-nova-iguacu-ca
 if (!JWT_SECRET) throw new Error('JWT_SECRET env var obrigatório em produção.');
 const PORT = Number(process.env.PORT || 4000);
 const ROLE_LIMITS = {
-  admin: 99,
   tutor: 1,
   protetor: 4,
   clinica: 0
@@ -114,18 +113,18 @@ app.get('/api/clinics/available', (req, res) => {
   if (!species || !sex) return res.status(400).json({ message: 'species e sex são obrigatórios.' });
   const clinics = db.prepare(`
     SELECT c.id, c.name, c.address, c.neighborhood,
-      SUM(s.total_quantity - s.occupied_quantity) AS available_slots
+      COALESCE(SUM(s.total_quantity - s.occupied_quantity), 0) AS available_slots
     FROM clinics c
-    JOIN slots s ON s.clinic_id = c.id
-    WHERE c.active = 1
+    LEFT JOIN slots s ON s.clinic_id = c.id
       AND s.active = 1
       AND s.date >= date('now', 'localtime')
       AND strftime('%Y-%m', s.date) = strftime('%Y-%m', 'now', 'localtime')
       AND s.species = ?
       AND s.sex = ?
       AND s.occupied_quantity < s.total_quantity
+    WHERE c.active = 1
     GROUP BY c.id
-    ORDER BY c.name
+    ORDER BY CASE WHEN available_slots > 0 THEN 0 ELSE 1 END, c.name
   `).all(species, sex);
   res.json({ clinics });
 });
@@ -158,6 +157,15 @@ app.get('/api/public/cpf-status', (req, res) => {
   }
 });
 
+app.get('/api/public/cep/:cep', async (req, res) => {
+  try {
+    const address = await lookupNovaIguacuCep(req.params.cep);
+    res.json({ address });
+  } catch (error) {
+    sendError(res, error);
+  }
+});
+
 app.post('/api/auth/login', (req, res) => {
   const { cpf, password } = req.body;
   const user = getUserByCpf(cpf);
@@ -167,9 +175,11 @@ app.post('/api/auth/login', (req, res) => {
   res.json({ token: signToken(user), user: publicUser(user) });
 });
 
-app.post('/api/auth/register', (req, res) => {
+app.post('/api/auth/register', async (req, res) => {
   try {
-    const { user, role = 'tutor' } = req.body;
+    const { user, role = 'tutor', terms } = req.body;
+    validateTerms(terms);
+    await lookupNovaIguacuCep(user?.cep || user?.zipCode);
     const saved = registerOrActivateUser(user, role, { allowExistingPassword: false });
     res.status(201).json({ token: signToken(saved), user: publicUser(saved) });
   } catch (error) {
@@ -181,6 +191,7 @@ app.post('/api/public/inscricao', async (req, res) => {
   try {
     const { user, animal, terms, role = 'tutor', clinicId = null } = req.body;
     validateTerms(terms);
+    await lookupNovaIguacuCep(user?.cep || user?.zipCode);
     const savedUser = registerOrActivateUser(user, role, { allowExistingPassword: true });
     const appointment = createAutomaticAppointment(savedUser, animal, terms, clinicId);
     res.status(201).json({
@@ -199,8 +210,8 @@ app.get('/api/me', requireAuth, (req, res) => {
   const user = getUserById(req.user.id);
   res.json({
     user: publicUser(user),
-    limit: ROLE_LIMITS[user.role] || 1,
-    currentMonthUsed: get30DayUsage(user.id),
+    limit: getAppointmentLimit(user.role),
+    currentMonthUsed: getCurrentMonthUsage(user.id),
     appointments: listAppointments({ userId: user.id })
   });
 });
@@ -556,7 +567,12 @@ app.delete('/api/admin/slots/:id', requireAdmin, (req, res) => {
 });
 
 app.get('/api/admin/appointments', requireAppointmentManager, (req, res) => {
-  const clinicId = req.user.role === 'clinica' ? req.user.clinic_id : null;
+  const requestedClinicId = Number(req.query.clinicId || req.query.clinic_id);
+  const clinicId = req.user.role === 'clinica'
+    ? req.user.clinic_id
+    : Number.isInteger(requestedClinicId) && requestedClinicId > 0
+      ? requestedClinicId
+      : null;
   if (req.user.role === 'clinica' && !clinicId) return res.status(403).json({ message: 'Usuário de clínica sem clínica vinculada.' });
   res.json({ appointments: listAppointments({ clinicId }) });
 });
@@ -786,38 +802,89 @@ function registerOrActivateUser(input = {}, role, options = {}) {
   if (existing) {
     db.prepare(`
       UPDATE users
-      SET name = ?, phone = ?, address = ?, neighborhood = ?, email = ?, password_hash = ?, city_confirmed = 1, adult_confirmed = 1,
+      SET name = ?, phone = ?, cep = ?, address = ?, address_number = ?, neighborhood = ?, email = ?, password_hash = ?, city_confirmed = 1, adult_confirmed = 1,
         active = 1, updated_at = CURRENT_TIMESTAMP
       WHERE id = ?
-    `).run(data.name, data.phone, data.address, data.neighborhood, data.email || existing.email || '', hash, existing.id);
+    `).run(data.name, data.phone, data.cep, data.address, data.address_number, data.neighborhood, data.email || existing.email || '', hash, existing.id);
     return getUserById(existing.id);
   }
 
   const result = db.prepare(`
-    INSERT INTO users (name, cpf, password_hash, phone, address, neighborhood, email, role, city_confirmed, adult_confirmed, active)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, 1, 1, 1)
-  `).run(data.name, data.cpf, hash, data.phone, data.address, data.neighborhood, data.email || '', selectedRole);
+    INSERT INTO users (name, cpf, password_hash, phone, cep, address, address_number, neighborhood, email, role, city_confirmed, adult_confirmed, active)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, 1, 1)
+  `).run(data.name, data.cpf, hash, data.phone, data.cep, data.address, data.address_number, data.neighborhood, data.email || '', selectedRole);
   return getUserById(result.lastInsertRowid);
 }
 
 function parseUser(input = {}, role) {
+  const addressNumberMissing = input.addressNumberMissing === true || input.address_number_missing === true || input.noAddressNumber === true;
   const data = {
     name: normalizeText(input.name),
     cpf: normalizeCpf(input.cpf),
     phone: normalizePhone(input.phone),
+    cep: normalizeCpf(input.cep || input.zipCode),
     address: normalizeText(input.address),
+    address_number: addressNumberMissing ? 'S/N' : normalizeText(input.addressNumber || input.address_number),
     neighborhood: normalizeText(input.neighborhood),
     email: normalizeText(input.email || '')
   };
   if (!data.name) throw httpError(400, 'Informe o nome completo.');
   if (!isValidCpf(data.cpf)) throw httpError(400, 'CPF inválido. Verifique os dígitos informados.');
+  if (data.cep.length !== 8) throw httpError(400, 'Informe um CEP válido com 8 dígitos.');
   if (!data.address) throw httpError(400, 'Informe o endereço completo.');
+  if (!data.address_number) throw httpError(400, 'Informe o número da residência ou marque a opção sem número.');
   if (!data.neighborhood && role !== 'protetor') throw httpError(400, 'Informe o bairro.');
   if (!data.phone) throw httpError(400, 'Informe o telefone.');
   if (data.email && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(data.email)) throw httpError(400, 'E-mail inválido.');
   if (!input.cityAdultConfirmed) throw httpError(400, 'Confirme que reside em Nova Iguaçu e é maior de 18 anos.');
   if (!input.password || String(input.password).length < 6) throw httpError(400, 'A senha de acesso deve ter pelo menos 6 caracteres para ser criada.');
   return data;
+}
+
+async function lookupNovaIguacuCep(value = '') {
+  const cep = normalizeCpf(value);
+  if (cep.length !== 8) throw httpError(400, 'Informe um CEP válido com 8 dígitos.');
+
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 6000);
+  let response;
+  try {
+    response = await fetch(`https://brasilapi.com.br/api/cep/v1/${cep}`, {
+      signal: controller.signal,
+      headers: { Accept: 'application/json' }
+    });
+  } catch (_error) {
+    throw httpError(502, 'Não foi possível consultar o CEP no momento. Tente novamente.');
+  } finally {
+    clearTimeout(timeout);
+  }
+
+  const data = await response.json().catch(() => ({}));
+  if (!response.ok) {
+    throw httpError(response.status === 404 ? 404 : 502, data.message || 'CEP não encontrado.');
+  }
+
+  const city = normalizeText(data.city);
+  const state = normalizeText(data.state).toUpperCase();
+  if (state !== 'RJ' || normalizeForComparison(city) !== 'nova iguacu') {
+    throw httpError(400, 'Informe um CEP do município de Nova Iguaçu.');
+  }
+
+  return {
+    cep,
+    state,
+    city,
+    neighborhood: normalizeText(data.neighborhood),
+    street: normalizeText(data.street),
+    service: normalizeText(data.service)
+  };
+}
+
+function normalizeForComparison(value = '') {
+  return normalizeText(value)
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .toLowerCase();
 }
 
 function validateTerms(terms = {}) {
@@ -876,11 +943,11 @@ function parseClinic(input = {}) {
 }
 
 function createAutomaticAppointment(user, animalInput, terms, clinicId) {
-  if (!['tutor', 'protetor'].includes(user.role)) {
-    throw httpError(403, 'Somente tutores e protetores podem solicitar agendamento.');
+  if (!['tutor', 'protetor', 'admin'].includes(user.role)) {
+    throw httpError(403, 'Somente tutores, protetores cadastrados e administradores podem solicitar agendamento.');
   }
   const animal = parseAnimal(animalInput);
-  const limit = ROLE_LIMITS[user.role] || 1;
+  const limit = getAppointmentLimit(user.role);
   let appointmentId;
 
   db.exec('BEGIN IMMEDIATE');
@@ -916,12 +983,11 @@ function createAutomaticAppointment(user, animalInput, terms, clinicId) {
       );
     }
 
-    const currentUsage = get30DayUsage(user.id);
-    if (currentUsage >= limit) {
-      throw httpError(409, `Limite de ${limit} agendamento(s) a cada 30 dias atingido.`);
-    }
-
     const selectedSlot = slots[0];
+    const currentUsage = getMonthlyUsage(user.id, selectedSlot.date);
+    if (limit !== null && currentUsage >= limit) {
+      throw httpError(409, `Limite de ${limit} agendamento(s) por mês atingido.`);
+    }
 
     const update = db.prepare(`
       UPDATE slots
@@ -966,14 +1032,14 @@ function getMonthlyUsage(userId, dateString) {
   `).get(userId, start, end).total;
 }
 
-function get30DayUsage(userId) {
-  return db.prepare(`
-    SELECT COUNT(*) AS total
-    FROM appointments
-    WHERE user_id = ?
-      AND status != 'cancelado'
-      AND created_at >= datetime('now', '-30 days', 'localtime')
-  `).get(userId).total;
+function getCurrentMonthUsage(userId) {
+  const today = db.prepare("SELECT date('now', 'localtime') AS today").get().today;
+  return getMonthlyUsage(userId, today);
+}
+
+function getAppointmentLimit(role) {
+  if (role === 'admin') return null;
+  return ROLE_LIMITS[role] ?? 1;
 }
 
 function listAppointments({ userId, clinicId, appointmentId } = {}) {

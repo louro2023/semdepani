@@ -43,7 +43,9 @@ export function initSchema() {
       cpf TEXT NOT NULL UNIQUE,
       password_hash TEXT,
       phone TEXT,
+      cep TEXT,
       address TEXT,
+      address_number TEXT,
       neighborhood TEXT,
       role TEXT NOT NULL CHECK (role IN ('admin', 'tutor', 'protetor', 'clinica')),
       clinic_id INTEGER REFERENCES clinics(id),
@@ -116,6 +118,8 @@ export function initSchema() {
   migrateUsersForClinicRole();
   ensureColumn('slots', 'clinic_id', 'INTEGER REFERENCES clinics(id)');
   ensureColumn('users', 'clinic_id', 'INTEGER REFERENCES clinics(id)');
+  ensureColumn('users', 'cep', 'TEXT');
+  ensureColumn('users', 'address_number', 'TEXT');
   ensureColumn('users', 'doc_residencia', 'TEXT');
   ensureColumn('users', 'doc_cpf', 'TEXT');
   ensureColumn('users', 'doc_identidade', 'TEXT');

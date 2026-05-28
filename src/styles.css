@@ -179,6 +179,18 @@ button:disabled {
   border-color: #a8d8cc;
 }
 
+.button.whatsapp {
+  color: #fff;
+  background: #128c7e;
+  border-color: #128c7e;
+  text-decoration: none;
+}
+
+.button.whatsapp:hover {
+  background: #0d756a;
+  border-color: #0d756a;
+}
+
 .button.ghost {
   color: var(--ink);
   background: #fff;
@@ -551,7 +563,30 @@ main {
   color: var(--muted);
   line-height: 1.7;
   max-width: 380px;
-  margin: 0 0 36px;
+  margin: 0 0 18px;
+}
+
+.ed-eligibility {
+  display: inline-flex;
+  align-items: flex-start;
+  gap: 10px;
+  width: fit-content;
+  max-width: 460px;
+  margin-bottom: 32px;
+  padding: 12px 14px;
+  color: var(--primary-dark);
+  background: rgba(224, 112, 32, 0.08);
+  border: 1px solid rgba(224, 112, 32, 0.28);
+  border-radius: 8px;
+  font-size: 0.92rem;
+  font-weight: 700;
+  line-height: 1.45;
+}
+
+.ed-eligibility svg {
+  flex: 0 0 auto;
+  color: var(--accent);
+  margin-top: 1px;
 }
 
 .ed-actions {
@@ -591,6 +626,12 @@ main {
   color: var(--primary-dark);
   background: #fff;
   border-color: var(--line);
+}
+
+.ed-protector-cta {
+  width: fit-content;
+  padding: 0 22px;
+  box-shadow: 0 4px 14px rgba(18, 140, 126, 0.2);
 }
 
 .ed-secondary-actions {
@@ -692,7 +733,15 @@ main {
   letter-spacing: 0.16em;
   text-transform: uppercase;
   color: var(--accent);
-  margin-bottom: 40px;
+  margin-bottom: 12px;
+}
+
+.ed-steps-note {
+  max-width: 760px;
+  margin: 0 0 38px;
+  color: var(--muted);
+  font-size: 1rem;
+  line-height: 1.65;
 }
 
 .ed-steps-grid {
@@ -842,6 +891,7 @@ main {
   margin: 4px 0 0;
   color: var(--muted);
   font-size: 0.92rem;
+  line-height: 1.55;
 }
 
 .stepper {
@@ -934,6 +984,11 @@ select:focus,
   border-color: var(--primary);
 }
 
+.field input:disabled {
+  color: var(--muted);
+  background: #f4f5fb;
+}
+
 .field input[aria-invalid="true"] {
   border-color: #d86145;
   background: #fff8f6;
@@ -965,6 +1020,10 @@ select:focus,
   align-items: center;
   min-height: 42px;
   padding: 9px 11px;
+}
+
+.number-missing-row {
+  align-self: end;
 }
 
 .terms-list {
@@ -1117,6 +1176,46 @@ select:focus,
 
 .dashboard-layout .button.primary {
   width: fit-content;
+}
+
+.clinic-selector-bar {
+  display: grid;
+  grid-template-columns: minmax(220px, 360px);
+  gap: 12px;
+  align-items: end;
+}
+
+.dashboard-guide {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.dashboard-guide > div {
+  display: grid;
+  gap: 6px;
+  padding: 14px 16px;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  box-shadow: 0 2px 14px rgba(19, 25, 83, 0.04);
+}
+
+.dashboard-guide strong {
+  color: var(--ink);
+  font-size: 0.92rem;
+}
+
+.dashboard-guide span {
+  color: var(--muted);
+  font-size: 0.84rem;
+  line-height: 1.45;
+}
+
+@media (max-width: 860px) {
+  .dashboard-guide {
+    grid-template-columns: 1fr;
+  }
 }
 
 .appointment-list {
@@ -1445,6 +1544,14 @@ tr:last-child td {
     width: 100%;
   }
 
+  .dashboard-layout .button.primary {
+    width: 100%;
+  }
+
+  .clinic-selector-bar {
+    grid-template-columns: 1fr;
+  }
+
   .metric {
     min-height: 96px;
   }
@@ -1640,6 +1747,14 @@ tr:last-child td {
   color: var(--ink);
 }
 
+.wiz-description {
+  max-width: 680px;
+  margin: 6px 0 0;
+  color: var(--muted);
+  font-size: 0.98rem;
+  line-height: 1.6;
+}
+
 /* ── Stepper ── */
 
 .wiz-progress {
@@ -1734,6 +1849,25 @@ tr:last-child td {
   grid-template-columns: repeat(2, minmax(0, 1fr));
   align-items: start;
   gap: 14px;
+}
+
+.wiz-step-note {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 12px 14px;
+  color: var(--primary-dark);
+  background: rgba(19, 25, 83, 0.05);
+  border: 1px solid rgba(200, 204, 232, 0.9);
+  border-radius: 8px;
+  font-size: 0.9rem;
+  line-height: 1.5;
+}
+
+.wiz-step-note svg {
+  flex: 0 0 auto;
+  color: var(--accent);
+  margin-top: 1px;
 }
 
 /* ── Step 2 terms ── */
@@ -2073,9 +2207,25 @@ tr:last-child td {
   background: rgba(12, 146, 120, 0.08);
 }
 
+.wiz-clinic-opt.unavailable {
+  cursor: not-allowed;
+  opacity: 1;
+  background: #f7f8fc;
+  border-color: var(--line);
+}
+
+.wiz-clinic-opt.unavailable:hover {
+  border-color: var(--line);
+  background: #f7f8fc;
+}
+
 .wiz-clinic-opt svg {
   color: var(--primary);
   flex-shrink: 0;
+}
+
+.wiz-clinic-opt.unavailable svg {
+  color: var(--muted);
 }
 
 .wiz-clinic-opt.active svg {
@@ -2106,6 +2256,11 @@ tr:last-child td {
   padding: 3px 10px;
   border-radius: 20px;
   background: rgba(24, 130, 92, 0.1);
+}
+
+.wiz-clinic-slots.empty {
+  color: var(--muted);
+  background: rgba(90, 94, 138, 0.12);
 }
 
 /* ── Result ── */
