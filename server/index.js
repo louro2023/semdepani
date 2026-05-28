@@ -12,6 +12,8 @@ import multer from 'multer';
 import nodemailer from 'nodemailer';
 import rateLimit from 'express-rate-limit';
 import {
+  autoRenewSlots,
+  bookingTargetMonth,
   createProtocol,
   db,
   getUserByCpf,
@@ -111,21 +113,21 @@ app.get('/api/health', (_req, res) => {
 app.get('/api/clinics/available', (req, res) => {
   const { species, sex } = req.query;
   if (!species || !sex) return res.status(400).json({ message: 'species e sex são obrigatórios.' });
+  const targetMonth = bookingTargetMonth();
   const clinics = db.prepare(`
     SELECT c.id, c.name, c.address, c.neighborhood,
       COALESCE(SUM(s.total_quantity - s.occupied_quantity), 0) AS available_slots
     FROM clinics c
     LEFT JOIN slots s ON s.clinic_id = c.id
       AND s.active = 1
-      AND s.date >= date('now', 'localtime')
-      AND strftime('%Y-%m', s.date) = strftime('%Y-%m', 'now', 'localtime')
+      AND strftime('%Y-%m', s.date) = ?
       AND s.species = ?
       AND s.sex = ?
       AND s.occupied_quantity < s.total_quantity
     WHERE c.active = 1
     GROUP BY c.id
     ORDER BY CASE WHEN available_slots > 0 THEN 0 ELSE 1 END, c.name
-  `).all(species, sex);
+  `).all(targetMonth, species, sex);
   res.json({ clinics });
 });
 
@@ -519,6 +521,15 @@ app.get('/api/admin/slots', requireAdmin, (_req, res) => {
   res.json({ slots: slots.map((slot) => ({ ...slot, label: animalTypeLabel(slot.species, slot.sex) })) });
 });
 
+app.post('/api/admin/slots/auto-renew', requireAdmin, (_req, res) => {
+  try {
+    const result = autoRenewSlots();
+    res.json(result);
+  } catch (error) {
+    sendError(res, error);
+  }
+});
+
 app.post('/api/admin/slots/renew', requireAdmin, (req, res) => {
   try {
     const ids = req.body.ids;
@@ -768,6 +779,9 @@ app.listen(PORT, LISTEN_HOST, () => {
 async function bootstrap() {
   initSchema();
   await seedDatabase();
+  autoRenewSlots();
+  // Check daily — idempotent, skips when day < 25 or slots already exist
+  setInterval(() => autoRenewSlots(), 24 * 60 * 60 * 1000);
 }
 
 function formatDateBR(dateStr) {
@@ -1000,24 +1014,25 @@ function createAutomaticAppointment(user, animalInput, terms, clinicId) {
       VALUES (?, ?, ?, ?, ?, ?)
     `).run(user.id, animal.name, animal.species, animal.sex, animal.breed, animal.approximate_age);
 
+    const targetMonth = bookingTargetMonth();
     const slots = clinicId
       ? db.prepare(`
           SELECT * FROM slots
-          WHERE active = 1 AND date >= date('now', 'localtime')
-            AND strftime('%Y-%m', date) = strftime('%Y-%m', 'now', 'localtime')
+          WHERE active = 1
+            AND strftime('%Y-%m', date) = ?
             AND species = ? AND sex = ?
             AND occupied_quantity < total_quantity
             AND clinic_id = ?
           ORDER BY date ASC, time ASC, id ASC
-        `).all(animal.species, animal.sex, clinicId)
+        `).all(targetMonth, animal.species, animal.sex, clinicId)
       : db.prepare(`
           SELECT * FROM slots
-          WHERE active = 1 AND date >= date('now', 'localtime')
-            AND strftime('%Y-%m', date) = strftime('%Y-%m', 'now', 'localtime')
+          WHERE active = 1
+            AND strftime('%Y-%m', date) = ?
             AND species = ? AND sex = ?
             AND occupied_quantity < total_quantity
           ORDER BY date ASC, time ASC, id ASC
-        `).all(animal.species, animal.sex);
+        `).all(targetMonth, animal.species, animal.sex);
 
     if (!slots.length) {
       throw httpError(409, clinicId

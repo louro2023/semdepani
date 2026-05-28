@@ -391,6 +391,65 @@ export function monthRange(dateString) {
   return { start, end };
 }
 
+// Returns the booking target month (YYYY-MM).
+// From day 25 onwards, slots for next month are open.
+export function bookingTargetMonth() {
+  const today = db.prepare("SELECT date('now', 'localtime') AS d").get().d;
+  const day = parseInt(today.slice(8, 10), 10);
+  if (day >= 25) {
+    const [y, m] = today.slice(0, 7).split('-').map(Number);
+    const next = new Date(y, m, 1);
+    return `${next.getFullYear()}-${String(next.getMonth() + 1).padStart(2, '0')}`;
+  }
+  return today.slice(0, 7);
+}
+
+// Clones all active slots from current month into next month.
+// Safe to call multiple times — skips slots that already exist.
+// Only acts when day >= 25.
+export function autoRenewSlots() {
+  const today = db.prepare("SELECT date('now', 'localtime') AS d").get().d;
+  const day = parseInt(today.slice(8, 10), 10);
+  if (day < 25) return { skipped: true };
+
+  const currentYM = today.slice(0, 7);
+  const [y, m] = currentYM.split('-').map(Number);
+  const nextDate = new Date(y, m, 1);
+  const nextYM = `${nextDate.getFullYear()}-${String(nextDate.getMonth() + 1).padStart(2, '0')}`;
+
+  const currentSlots = db.prepare(`
+    SELECT *, date(date, '+1 month') AS next_date
+    FROM slots
+    WHERE active = 1 AND strftime('%Y-%m', date) = ?
+  `).all(currentYM);
+
+  let created = 0;
+  db.exec('BEGIN IMMEDIATE');
+  try {
+    for (const slot of currentSlots) {
+      const existing = db.prepare(`
+        SELECT id FROM slots
+        WHERE strftime('%Y-%m', date) = ?
+          AND time = ? AND species = ? AND sex = ?
+          AND clinic_id IS ? AND clinic IS ?
+      `).get(nextYM, slot.time, slot.species, slot.sex, slot.clinic_id, slot.clinic);
+      if (!existing) {
+        db.prepare(`
+          INSERT INTO slots (date, time, species, sex, total_quantity, occupied_quantity, clinic_id, clinic, active)
+          VALUES (?, ?, ?, ?, ?, 0, ?, ?, 1)
+        `).run(slot.next_date, slot.time, slot.species, slot.sex, slot.total_quantity, slot.clinic_id, slot.clinic);
+        created++;
+      }
+    }
+    db.exec('COMMIT');
+  } catch (err) {
+    db.exec('ROLLBACK');
+    throw err;
+  }
+  console.log(`[autoRenew] ${created} vagas criadas para ${nextYM}`);
+  return { created, nextMonth: nextYM };
+}
+
 export function toDateString(date) {
   const year = date.getFullYear();
   const month = String(date.getMonth() + 1).padStart(2, '0');
