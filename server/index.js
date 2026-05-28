@@ -40,9 +40,8 @@ const smtpTransporter = process.env.SMTP_HOST
       auth: { user: process.env.SMTP_USER, pass: process.env.SMTP_PASS }
     })
   : null;
-const isDev = process.env.NODE_ENV !== 'production';
-const JWT_SECRET = process.env.JWT_SECRET || (isDev ? 'dev-secret-nova-iguacu-castracao' : null);
-if (!JWT_SECRET) throw new Error('JWT_SECRET env var obrigatório em produção.');
+if (!process.env.JWT_SECRET) throw new Error('JWT_SECRET env var obrigatório. Em dev, adicione ao .env: JWT_SECRET=dev-secret-local');
+const JWT_SECRET = process.env.JWT_SECRET;
 const PORT = Number(process.env.PORT || 4000);
 const ROLE_LIMITS = {
   tutor: 1,
@@ -82,7 +81,6 @@ const csvUpload = multer({
 const app = express();
 app.use(helmet({
   crossOriginResourcePolicy: { policy: 'same-origin' },
-  strictTransportSecurity: false,
   contentSecurityPolicy: {
     useDefaults: false,
     directives: {
@@ -102,7 +100,9 @@ app.use(express.json({ limit: '2mb' }));
 const authLimiter = rateLimit({ windowMs: 60_000, max: 15, standardHeaders: true, legacyHeaders: false });
 app.use('/api/auth/login', authLimiter);
 app.use('/api/auth/register', authLimiter);
+app.use('/api/public/cpf-status', authLimiter);
 app.use('/api/public/inscricao', rateLimit({ windowMs: 60_000, max: 5, standardHeaders: true, legacyHeaders: false }));
+app.use('/api/me/password', rateLimit({ windowMs: 60_000, max: 5, standardHeaders: true, legacyHeaders: false }));
 
 await bootstrap();
 
@@ -701,6 +701,12 @@ app.post('/api/admin/users/import', requireAdmin, (req, res, next) => {
   try {
     if (!req.file) throw httpError(400, 'Nenhum arquivo enviado.');
     const ext = path.extname(req.file.originalname).toLowerCase();
+    if (ext === '.xlsx') {
+      const magic = req.file.buffer.slice(0, 4);
+      if (!(magic[0] === 0x50 && magic[1] === 0x4B && magic[2] === 0x03 && magic[3] === 0x04)) {
+        throw httpError(400, 'Arquivo XLSX inválido. Envie um arquivo Excel real (.xlsx).');
+      }
+    }
     const rows = ext === '.xlsx'
       ? await parseExcelBuffer(req.file.buffer)
       : parseCsvBuffer(req.file.buffer);

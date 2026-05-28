@@ -184,12 +184,11 @@ function migrateUsersForClinicRole() {
 }
 
 function seedAdmin() {
-  const isProd = process.env.NODE_ENV === 'production';
-  if (isProd && (!process.env.ADMIN_CPF || !process.env.ADMIN_PASSWORD)) {
-    throw new Error('[SEGURANÇA] ADMIN_CPF e ADMIN_PASSWORD são obrigatórios em produção. Configure o arquivo .env antes de iniciar.');
+  if (!process.env.ADMIN_CPF || !process.env.ADMIN_PASSWORD) {
+    throw new Error('[SEGURANÇA] ADMIN_CPF e ADMIN_PASSWORD são obrigatórios. Adicione ao .env: ADMIN_CPF=00000000000 ADMIN_PASSWORD=admin123');
   }
-  const adminCpf = normalizeCpf(process.env.ADMIN_CPF || '00000000000');
-  const password = process.env.ADMIN_PASSWORD || 'admin123';
+  const adminCpf = normalizeCpf(process.env.ADMIN_CPF);
+  const password = process.env.ADMIN_PASSWORD;
   const hash = bcrypt.hashSync(password, 12);
   db.prepare(`
     INSERT INTO users (name, cpf, password_hash, phone, address, neighborhood, role, city_confirmed, adult_confirmed, active)
