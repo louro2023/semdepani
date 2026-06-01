@@ -111,7 +111,7 @@ app.use(express.json({ limit: '2mb' }));
 const authLimiter = rateLimit({ windowMs: 60_000, max: 15, standardHeaders: true, legacyHeaders: false });
 app.use('/api/auth/login', authLimiter);
 app.use('/api/auth/register', authLimiter);
-app.use('/api/public/cpf-status', authLimiter);
+app.use('/api/public/cpf-status', rateLimit({ windowMs: 60_000, max: 60, standardHeaders: true, legacyHeaders: false }));
 app.use('/api/public/inscricao', rateLimit({ windowMs: 60_000, max: 5, standardHeaders: true, legacyHeaders: false }));
 app.use('/api/me/password', rateLimit({ windowMs: 60_000, max: 5, standardHeaders: true, legacyHeaders: false }));
 
