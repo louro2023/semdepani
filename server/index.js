@@ -1210,7 +1210,11 @@ function changeAppointmentStatus(id, status, reason = '', options = {}) {
   const appointment = db.prepare('SELECT * FROM appointments WHERE id = ?').get(id);
   if (!appointment) throw httpError(404, 'Agendamento não encontrado.');
   if (appointment.status === status) {
-    db.prepare('UPDATE appointments SET reason = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?').run(normalizeText(reason), id);
+    if (status === 'realizado') {
+      db.prepare('UPDATE appointments SET reason = ?, microchip = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?').run(normalizeText(reason), microchipRaw, id);
+    } else {
+      db.prepare('UPDATE appointments SET reason = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?').run(normalizeText(reason), id);
+    }
     return;
   }
   const microchipValue = status === 'realizado' ? microchipRaw : null;

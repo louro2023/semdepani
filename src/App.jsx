@@ -990,8 +990,8 @@ function ClinicPanel({ auth }) {
   const [loading, setLoading] = useState(true);
   const isAdmin = auth.user.role === 'admin';
 
-  async function loadAppointments() {
-    setLoading(true);
+  async function loadAppointments(showLoading = true) {
+    if (showLoading) setLoading(true);
     try {
       const query = isAdmin && selectedClinicId ? `?clinicId=${selectedClinicId}` : '';
       const data = await request(`/admin/appointments${query}`, {}, auth.token);
@@ -1000,7 +1000,7 @@ function ClinicPanel({ auth }) {
     } catch (err) {
       setError(err.message);
     } finally {
-      setLoading(false);
+      if (showLoading) setLoading(false);
     }
   }
 
@@ -1044,7 +1044,7 @@ function ClinicPanel({ auth }) {
         </div>
       ) : null}
       {loading ? <Loading label="Carregando agendamentos" /> : (
-        <AppointmentsTab appointments={appointments} reload={loadAppointments} auth={auth} />
+        <AppointmentsTab appointments={appointments} reload={() => loadAppointments(false)} auth={auth} />
       )}
       {!isAdmin ? <ChangePasswordForm auth={auth} /> : null}
     </section>
