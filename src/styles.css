@@ -870,6 +870,11 @@ main {
   gap: 18px;
 }
 
+.admin-layout {
+  width: min(1360px, calc(100vw - 32px));
+  justify-self: center;
+}
+
 .section-title {
   display: grid;
   gap: 4px;
@@ -1480,6 +1485,92 @@ tr:last-child td {
   min-height: 36px;
   padding: 0 12px;
   white-space: nowrap;
+}
+
+.appointments-table {
+  scrollbar-gutter: stable;
+}
+
+.appointments-table table {
+  table-layout: fixed;
+  min-width: 1296px;
+}
+
+.appointments-table th:nth-child(1),
+.appointments-table td:nth-child(1) {
+  width: 140px;
+}
+
+.appointments-table th:nth-child(2),
+.appointments-table td:nth-child(2) {
+  width: 120px;
+}
+
+.appointments-table th:nth-child(3),
+.appointments-table td:nth-child(3) {
+  width: 125px;
+}
+
+.appointments-table th:nth-child(4),
+.appointments-table td:nth-child(4) {
+  width: 210px;
+}
+
+.appointments-table th:nth-child(5),
+.appointments-table td:nth-child(5) {
+  width: 115px;
+}
+
+.appointments-table th:nth-child(6),
+.appointments-table td:nth-child(6) {
+  width: 116px;
+}
+
+.appointments-table th:nth-child(7),
+.appointments-table td:nth-child(7) {
+  width: 160px;
+}
+
+.appointments-table th:nth-child(8),
+.appointments-table td:nth-child(8) {
+  width: 210px;
+}
+
+.appointments-table th:nth-child(9),
+.appointments-table td:nth-child(9) {
+  width: 100px;
+}
+
+.appointments-table select,
+.appointments-table .table-input {
+  width: 100%;
+  min-width: 0;
+}
+
+.appointments-table .microchip-input {
+  min-width: 0;
+}
+
+.appointments-table .table-save {
+  width: 100%;
+  min-width: 0;
+  padding: 0 10px;
+}
+
+@media (max-width: 1360px) {
+  .appointments-table th:nth-child(9),
+  .appointments-table td:nth-child(9) {
+    position: sticky;
+    right: 0;
+    z-index: 1;
+    background: #fff;
+    box-shadow: -8px 0 16px rgba(15, 12, 80, 0.08);
+  }
+
+  .appointments-table th:nth-child(9) {
+    z-index: 2;
+    background: var(--surface-strong);
+  }
 }
 
 @media (max-width: 860px) {

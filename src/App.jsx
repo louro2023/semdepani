@@ -2044,6 +2044,7 @@ function AppointmentsTab({ appointments, reload, auth }) {
       {error ? <InlineAlert message={error} /> : null}
       {savedMessage ? <div className="inline-success"><CheckCircle2 size={18} />{savedMessage}</div> : null}
       <DataTable
+        className="appointments-table"
         columns={['Nome', 'Contato', 'Animal', 'Horário', 'Documentos', 'Status', 'Microchip', 'Motivo', 'Ação']}
         rows={appointments.map((appointment) => {
           const draft = draftFor(appointment);
@@ -2100,7 +2101,8 @@ function AppointmentsTab({ appointments, reload, auth }) {
               placeholder="Motivo"
             />,
             <button key={`save-${appointment.id}`} className="button secondary table-save" type="button" onClick={() => save(appointment)} title="Salvar status">
-              <Save size={18} /> Salvar
+              <Save size={18} />
+              <span>Salvar</span>
             </button>
           ];
         })}
@@ -2502,10 +2504,10 @@ function Metric({ icon: Icon, label, value }) {
   );
 }
 
-function DataTable({ columns, rows }) {
+function DataTable({ columns, rows, className = '' }) {
   if (!rows.length) return <p className="muted">Nenhum registro encontrado.</p>;
   return (
-    <div className="table-wrap">
+    <div className={`table-wrap ${className}`.trim()}>
       <table>
         <thead>
           <tr>{columns.map((column, i) => <th key={i}>{column}</th>)}</tr>

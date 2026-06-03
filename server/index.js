@@ -132,6 +132,7 @@ app.get('/api/clinics/available', (req, res) => {
     LEFT JOIN slots s ON s.clinic_id = c.id
       AND s.active = 1
       AND strftime('%Y-%m', s.date) = ?
+      AND s.date >= date('now', 'localtime')
       AND s.species = ?
       AND s.sex = ?
       AND s.occupied_quantity < s.total_quantity
@@ -1037,6 +1038,7 @@ function createAutomaticAppointment(user, animalInput, terms, clinicId) {
           SELECT * FROM slots
           WHERE active = 1
             AND strftime('%Y-%m', date) = ?
+            AND date >= date('now', 'localtime')
             AND species = ? AND sex = ?
             AND occupied_quantity < total_quantity
             AND clinic_id = ?
@@ -1046,6 +1048,7 @@ function createAutomaticAppointment(user, animalInput, terms, clinicId) {
           SELECT * FROM slots
           WHERE active = 1
             AND strftime('%Y-%m', date) = ?
+            AND date >= date('now', 'localtime')
             AND species = ? AND sex = ?
             AND occupied_quantity < total_quantity
           ORDER BY date ASC, time ASC, id ASC
@@ -1067,7 +1070,7 @@ function createAutomaticAppointment(user, animalInput, terms, clinicId) {
     const update = db.prepare(`
       UPDATE slots
       SET occupied_quantity = occupied_quantity + 1, updated_at = CURRENT_TIMESTAMP
-      WHERE id = ? AND occupied_quantity < total_quantity
+      WHERE id = ? AND date >= date('now', 'localtime') AND occupied_quantity < total_quantity
     `).run(selectedSlot.id);
     if (update.changes !== 1) throw httpError(409, 'A vaga acabou de ser preenchida. Tente novamente.');
 
