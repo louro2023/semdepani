@@ -1557,6 +1557,25 @@ tr:last-child td {
   padding: 0 10px;
 }
 
+.table-action-cell {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  align-items: stretch;
+}
+
+.row-save-error {
+  font-size: 0.75rem;
+  color: #b42318;
+  line-height: 1.3;
+}
+
+.row-save-success {
+  font-size: 0.75rem;
+  color: #18825c;
+  line-height: 1.3;
+}
+
 @media (max-width: 1360px) {
   .appointments-table th:nth-child(9),
   .appointments-table td:nth-child(9) {

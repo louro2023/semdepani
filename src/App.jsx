@@ -1998,8 +1998,8 @@ function SlotsTab({ slots, clinics, reload, auth }) {
 
 function AppointmentsTab({ appointments, reload, auth }) {
   const [drafts, setDrafts] = useState({});
-  const [error, setError] = useState('');
-  const [savedMessage, setSavedMessage] = useState('');
+  const [rowErrors, setRowErrors] = useState({});
+  const [rowMessages, setRowMessages] = useState({});
 
   function draftFor(appointment) {
     return drafts[appointment.id] || { status: appointment.status, reason: appointment.reason || '', microchip: appointment.microchip || '' };
@@ -2015,10 +2015,11 @@ function AppointmentsTab({ appointments, reload, auth }) {
     if (draft.status === 'realizado') {
       const digits = (draft.microchip || '').replace(/\s/g, '');
       if (!/^\d{16}$/.test(digits)) {
-        setError('Informe o microchip: 15 dígitos + 1 dígito verificador (16 dígitos no total).');
+        setRowErrors(prev => ({ ...prev, [appointment.id]: 'Informe o microchip: 15 dígitos + 1 dígito verificador (16 dígitos no total).' }));
         return;
       }
     }
+    setRowErrors(prev => { const n = { ...prev }; delete n[appointment.id]; return n; });
     try {
       await request(`/admin/appointments/${appointment.id}/status`, {
         method: 'PATCH',
@@ -2029,20 +2030,16 @@ function AppointmentsTab({ appointments, reload, auth }) {
         delete next[appointment.id];
         return next;
       });
-      setSavedMessage(`Agendamento ${appointment.protocol} atualizado.`);
-      setError('');
+      setRowMessages(prev => ({ ...prev, [appointment.id]: `Agendamento ${appointment.protocol} atualizado.` }));
       reload();
-      setTimeout(() => setSavedMessage(''), 3000);
+      setTimeout(() => setRowMessages(prev => { const n = { ...prev }; delete n[appointment.id]; return n; }), 3000);
     } catch (err) {
-      setError(err.message);
-      setSavedMessage('');
+      setRowErrors(prev => ({ ...prev, [appointment.id]: err.message }));
     }
   }
 
   return (
     <div className="admin-section">
-      {error ? <InlineAlert message={error} /> : null}
-      {savedMessage ? <div className="inline-success"><CheckCircle2 size={18} />{savedMessage}</div> : null}
       <DataTable
         className="appointments-table"
         columns={['Nome', 'Contato', 'Animal', 'Horário', 'Documentos', 'Status', 'Microchip', 'Motivo', 'Ação']}
@@ -2100,10 +2097,14 @@ function AppointmentsTab({ appointments, reload, auth }) {
               onChange={(event) => setDrafts({ ...drafts, [appointment.id]: { ...draft, reason: event.target.value } })}
               placeholder="Motivo"
             />,
-            <button key={`save-${appointment.id}`} className="button secondary table-save" type="button" onClick={() => save(appointment)} title="Salvar status">
-              <Save size={18} />
-              <span>Salvar</span>
-            </button>
+            <div key={`action-${appointment.id}`} className="table-action-cell">
+              <button className="button secondary table-save" type="button" onClick={() => save(appointment)} title="Salvar status">
+                <Save size={18} />
+                <span>Salvar</span>
+              </button>
+              {rowErrors[appointment.id] ? <span className="row-save-error">{rowErrors[appointment.id]}</span> : null}
+              {rowMessages[appointment.id] ? <span className="row-save-success">{rowMessages[appointment.id]}</span> : null}
+            </div>
           ];
         })}
       />
