@@ -158,14 +158,19 @@ O limite mensal e calculado pelo mes do slot escolhido, usando `getMonthlyUsage`
 
 Endpoint: `GET /api/clinics/available?species=&sex=`
 
+Endpoint: `GET /api/clinics/:clinicId/available-dates?species=&sex=`
+
 Comportamento atual:
 
 - Retorna todas as clinicas ativas.
 - Clinicas com vaga aparecem selecionaveis.
 - Clinicas sem vaga aparecem na lista, mas desabilitadas.
 - O texto exibido e `Sem vagas disponiveis no momento`.
-- O usuario escolhe a clinica, mas nao escolhe horario.
-- O sistema reserva automaticamente o primeiro horario compativel disponivel.
+- Depois de escolher a clinica, o usuario escolhe uma data disponivel para a unidade.
+- Datas lotadas nao aparecem na etapa de data.
+- O usuario escolhe a clinica e a data, mas nao escolhe horario.
+- O backend revalida clinica ativa, data, especie, sexo e capacidade no momento da confirmacao.
+- O sistema reserva automaticamente o primeiro horario compativel disponivel na data escolhida.
 
 ### Area de clinica
 
@@ -208,6 +213,7 @@ Comportamento atual:
 | GET | `/api/health` | Health check |
 | GET | `/api/availability` | Vagas agrupadas |
 | GET | `/api/clinics/available?species=&sex=` | Todas as clinicas ativas com contador de vagas |
+| GET | `/api/clinics/:clinicId/available-dates?species=&sex=` | Datas disponiveis por clinica ativa e tipo de animal |
 | GET | `/api/public/cpf-status?cpf=` | Verifica CPF ja cadastrado |
 | GET | `/api/public/cep/:cep` | Consulta CEP e valida Nova Iguacu via BrasilAPI |
 | POST | `/api/auth/login` | Login |
@@ -269,7 +275,8 @@ Ao clicar em agendar:
 2. Aceita termos.
 3. Informa animal.
 4. Escolhe clinica.
-5. Confirma agendamento.
+5. Escolhe data disponivel.
+6. Confirma agendamento.
 
 ### Dashboard do tutor/protetor/admin
 
