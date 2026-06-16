@@ -41,6 +41,20 @@ const emptyUser = {
   cityAdultConfirmed: false
 };
 
+const emptyResponsible = {
+  enabled: false,
+  name: '',
+  cpf: '',
+  cep: '',
+  address: '',
+  addressNumber: '',
+  addressNumberMissing: false,
+  neighborhood: '',
+  phone: '',
+  email: '',
+  cityAdultConfirmed: false
+};
+
 const emptyAnimal = {
   name: '',
   species: 'gato',
@@ -299,10 +313,10 @@ function Wizard({ auth, onDone }) {
   const isRegistrationFlow = !auth;
   const stepTitles = isRegistrationFlow
     ? ['Dados do cidadão', 'Termos e aceite']
-    : ['Usuário logado', 'Termos e regras', 'Dados do animal', 'Escolher clínica', 'Confirmação'];
+    : ['Usuário logado', 'Termos e regras', 'Dados do animal', 'Escolher clínica', 'Escolher data', 'Confirmação'];
   const stepLabels = isRegistrationFlow
     ? ['Dados', 'Termos']
-    : ['Tutor', 'Termos', 'Animal', 'Clínica', 'Confirmar'];
+    : ['Tutor', 'Termos', 'Animal', 'Clínica', 'Data', 'Confirmar'];
   const stepDescriptions = isRegistrationFlow
     ? [
         'Crie seu acesso como tutor. O cadastro é exclusivo para moradores e munícipes de Nova Iguaçu.',
@@ -312,7 +326,8 @@ function Wizard({ auth, onDone }) {
         'Seu cadastro já está ativo. Agora siga os próximos passos para solicitar a castração do animal.',
         'Revise os requisitos do programa antes de solicitar o agendamento.',
         'Informe os dados do animal que será avaliado para a castração.',
-        'Escolha uma clínica com vaga disponível. O sistema atribui automaticamente o primeiro horário compatível.',
+        'Escolha uma clínica com vaga disponível para o tipo de animal informado.',
+        'Escolha um dos dias disponibilizados pela administração para a clínica selecionada.',
         'Confira os dados antes de confirmar o agendamento.'
       ];
   const totalSteps = stepTitles.length;
@@ -329,15 +344,20 @@ function Wizard({ auth, onDone }) {
     password: '',
     cityAdultConfirmed: true
   } : emptyUser);
+  const [responsible, setResponsible] = useState(emptyResponsible);
   const [terms, setTerms] = useState(emptyTerms);
   const [animal, setAnimal] = useState(emptyAnimal);
   const [clinics, setClinics] = useState([]);
   const [selectedClinicId, setSelectedClinicId] = useState(null);
+  const [availableDates, setAvailableDates] = useState([]);
+  const [selectedDate, setSelectedDate] = useState('');
   const [clinicsLoading, setClinicsLoading] = useState(false);
+  const [datesLoading, setDatesLoading] = useState(false);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
   const [cpfRegistrationError, setCpfRegistrationError] = useState('');
   const [cepLookup, setCepLookup] = useState({ loading: false, error: '', success: '' });
+  const [responsibleCepLookup, setResponsibleCepLookup] = useState({ loading: false, error: '', success: '' });
   const [validationAttempted, setValidationAttempted] = useState(false);
   const [result, setResult] = useState(null);
 
@@ -345,9 +365,13 @@ function Wizard({ auth, onDone }) {
   const stepDescription = stepDescriptions[step - 1];
   const cpfDigits = onlyDigits(user.cpf);
   const cepDigits = onlyDigits(user.cep);
+  const responsibleCepDigits = onlyDigits(responsible.cep);
   const cpfError = getCpfValidationMessage(user.cpf) || cpfRegistrationError;
   const cepError = cepLookup.error || (validationAttempted && step === 1 && cepDigits.length !== 8 ? 'Informe um CEP válido com 8 dígitos.' : '');
+  const responsibleCpfError = responsible.enabled ? getCpfValidationMessage(responsible.cpf) : '';
+  const responsibleCepError = responsibleCepLookup.error || (validationAttempted && step === 1 && responsible.enabled && responsibleCepDigits.length !== 8 ? 'Informe um CEP válido com 8 dígitos para o responsável substituto.' : '');
   const showStepOneFieldErrors = validationAttempted && step === 1 && isRegistrationFlow;
+  const showResponsibleFieldErrors = validationAttempted && step === 1 && !isRegistrationFlow && responsible.enabled;
 
   useEffect(() => {
     if (!isRegistrationFlow) return;
@@ -380,6 +404,40 @@ function Wizard({ auth, onDone }) {
     };
   }, [cepDigits, isRegistrationFlow]);
 
+  useEffect(() => {
+    if (isRegistrationFlow || !responsible.enabled) {
+      setResponsibleCepLookup({ loading: false, error: '', success: '' });
+      return;
+    }
+    if (responsibleCepDigits.length !== 8) {
+      setResponsibleCepLookup({ loading: false, error: '', success: '' });
+      return;
+    }
+
+    let cancelled = false;
+    setResponsibleCepLookup({ loading: true, error: '', success: '' });
+    request(`/public/cep/${responsibleCepDigits}`)
+      .then((data) => {
+        if (cancelled) return;
+        setResponsible((current) => {
+          if (!current.enabled || onlyDigits(current.cep) !== responsibleCepDigits) return current;
+          return {
+            ...current,
+            address: data.address?.street || current.address,
+            neighborhood: data.address?.neighborhood || current.neighborhood
+          };
+        });
+        setResponsibleCepLookup({ loading: false, error: '', success: 'Endereço encontrado em Nova Iguaçu.' });
+      })
+      .catch((err) => {
+        if (!cancelled) setResponsibleCepLookup({ loading: false, error: err.message, success: '' });
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [responsibleCepDigits, responsible.enabled, isRegistrationFlow]);
+
   function updateUser(field, value) {
     setError('');
     if (field === 'cpf') setCpfRegistrationError('');
@@ -387,14 +445,28 @@ function Wizard({ auth, onDone }) {
     setUser((current) => ({ ...current, [field]: value }));
   }
 
+  function updateResponsible(field, value) {
+    setError('');
+    if (field === 'cep') setResponsibleCepLookup({ loading: false, error: '', success: '' });
+    setResponsible((current) => {
+      if (field === 'enabled' && !value) return { ...emptyResponsible };
+      return { ...current, [field]: value };
+    });
+  }
+
   function updateAnimal(field, value) {
     setAnimal((current) => ({ ...current, [field]: value }));
+    setSelectedClinicId(null);
+    setAvailableDates([]);
+    setSelectedDate('');
   }
 
   async function loadClinics() {
     setClinicsLoading(true);
     setClinics([]);
     setSelectedClinicId(null);
+    setAvailableDates([]);
+    setSelectedDate('');
     try {
       const data = await request(`/clinics/available?species=${animal.species}&sex=${animal.sex}`);
       const list = data.clinics || [];
@@ -408,6 +480,30 @@ function Wizard({ auth, onDone }) {
     }
   }
 
+  function chooseClinic(clinicId) {
+    setSelectedClinicId(clinicId);
+    setAvailableDates([]);
+    setSelectedDate('');
+  }
+
+  async function loadAvailableDates(clinicId = selectedClinicId) {
+    if (!clinicId) return;
+    setDatesLoading(true);
+    setAvailableDates([]);
+    setSelectedDate('');
+    try {
+      const data = await request(`/clinics/${clinicId}/available-dates?species=${animal.species}&sex=${animal.sex}`);
+      const dates = data.dates || [];
+      setAvailableDates(dates);
+      if (dates.length === 1) setSelectedDate(dates[0].date);
+    } catch (err) {
+      setAvailableDates([]);
+      setError(err.message);
+    } finally {
+      setDatesLoading(false);
+    }
+  }
+
   function validateStep(targetStep = step) {
     if (targetStep === 1 && isRegistrationFlow) {
       if (!user.name || !user.cep || !user.address || (!user.addressNumber && !user.addressNumberMissing) || !user.neighborhood || !user.phone) return 'Preencha todos os campos obrigatórios da etapa do tutor.';
@@ -418,11 +514,23 @@ function Wizard({ auth, onDone }) {
       if (user.password.length < PASSWORD_MIN_LENGTH) return `A senha de acesso deve ter pelo menos ${PASSWORD_MIN_LENGTH} caracteres para ser criada.`;
       if (!user.cityAdultConfirmed) return 'Confirme que reside em Nova Iguaçu e é maior de 18 anos.';
     }
+    if (!isRegistrationFlow && targetStep === 1 && responsible.enabled) {
+      if (!responsible.name || !responsible.cep || !responsible.address || (!responsible.addressNumber && !responsible.addressNumberMissing) || !responsible.neighborhood || !responsible.phone) {
+        return 'Preencha todos os campos obrigatórios do responsável substituto.';
+      }
+      if (responsibleCpfError) return responsibleCpfError;
+      if (responsibleCepDigits.length !== 8) return 'Informe um CEP válido com 8 dígitos para o responsável substituto.';
+      if (responsibleCepLookup.loading) return 'Aguarde a consulta do CEP do responsável substituto para continuar.';
+      if (responsibleCepLookup.error) return responsibleCepLookup.error;
+      if (responsible.email && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(responsible.email)) return 'E-mail do responsável substituto inválido.';
+      if (!responsible.cityAdultConfirmed) return 'Confirme que o responsável substituto reside em Nova Iguaçu e é maior de 18 anos.';
+    }
     if (targetStep === 2 && (!terms.requirementsAccepted || !terms.documentsAccepted)) return 'Aceite os termos e confirme os documentos para continuar.';
     if (!isRegistrationFlow && targetStep === 3 && !animal.name) return 'Informe o nome do animal.';
     if (!isRegistrationFlow && targetStep === 3 && !animal.breed) return 'Informe a raça do animal.';
     if (!isRegistrationFlow && targetStep === 3 && !animal.approximateAge) return 'Informe a idade aproximada do animal.';
     if (!isRegistrationFlow && targetStep === 4 && !selectedClinicId) return 'Selecione uma clínica disponível para continuar.';
+    if (!isRegistrationFlow && targetStep === 5 && !selectedDate) return 'Selecione uma data disponível para continuar.';
     return '';
   }
 
@@ -462,6 +570,9 @@ function Wizard({ auth, onDone }) {
     if (!isRegistrationFlow && step === 3) {
       setStep(4);
       loadClinics();
+    } else if (!isRegistrationFlow && step === 4) {
+      setStep(5);
+      loadAvailableDates(selectedClinicId);
     } else {
       setStep((value) => value + 1);
     }
@@ -483,7 +594,9 @@ function Wizard({ auth, onDone }) {
         onDone({ token: data.token, user: data.user });
         return;
       }
-      const data = await request('/appointments/auto', { method: 'POST', body: { animal, terms, clinicId: selectedClinicId } }, auth.token);
+      const appointmentBody = { animal, terms, clinicId: selectedClinicId, date: selectedDate };
+      if (responsible.enabled) appointmentBody.responsible = responsible;
+      const data = await request('/appointments/auto', { method: 'POST', body: appointmentBody }, auth.token);
       const appointment = data.appointment;
       setResult(appointment);
       onDone({ appointment });
@@ -580,6 +693,69 @@ function Wizard({ auth, onDone }) {
                         <CalendarPlus size={18} />
                         <span>Você já está logado. Continue para revisar as regras e informar o animal que será agendado.</span>
                       </div>
+                      <label className="check-row span-2">
+                        <input
+                          type="checkbox"
+                          checked={responsible.enabled}
+                          onChange={(event) => updateResponsible('enabled', event.target.checked)}
+                        />
+                        <span>Outra pessoa será responsável por levar o animal ao atendimento</span>
+                      </label>
+                      {responsible.enabled ? (
+                        <div className="substitute-form span-2">
+                          <div className="substitute-form-title">
+                            <Users size={18} />
+                            <strong>Dados do responsável substituto</strong>
+                          </div>
+                          <div className="substitute-grid">
+                            <TextField label="Nome completo" value={responsible.name} onChange={(value) => updateResponsible('name', value)} required />
+                            <TextField
+                              label="CPF"
+                              value={responsible.cpf}
+                              onChange={(value) => updateResponsible('cpf', onlyDigits(value).slice(0, CPF_DIGITS_LENGTH))}
+                              inputMode="numeric"
+                              maxLength={CPF_DIGITS_LENGTH}
+                              hint={`Somente números, ${CPF_DIGITS_LENGTH} dígitos`}
+                              error={showResponsibleFieldErrors ? responsibleCpfError : ''}
+                              required
+                            />
+                            <TextField
+                              label="CEP"
+                              value={responsible.cep}
+                              onChange={(value) => updateResponsible('cep', onlyDigits(value).slice(0, 8))}
+                              inputMode="numeric"
+                              maxLength={8}
+                              hint={responsibleCepLookup.loading ? 'Buscando endereço...' : responsibleCepLookup.success || 'Somente números, 8 dígitos'}
+                              error={showResponsibleFieldErrors || responsibleCepLookup.error ? responsibleCepError : ''}
+                              required
+                            />
+                            <TextField label="Endereço" value={responsible.address} onChange={(value) => updateResponsible('address', value)} required />
+                            <TextField label="Número da residência" value={responsible.addressNumber} onChange={(value) => updateResponsible('addressNumber', value)} required={!responsible.addressNumberMissing} disabled={responsible.addressNumberMissing} />
+                            <label className="check-row compact-check number-missing-row">
+                              <input
+                                type="checkbox"
+                                checked={responsible.addressNumberMissing}
+                                onChange={(event) => {
+                                  updateResponsible('addressNumberMissing', event.target.checked);
+                                  if (event.target.checked) updateResponsible('addressNumber', '');
+                                }}
+                              />
+                              <span>Sem número</span>
+                            </label>
+                            <TextField label="Bairro" value={responsible.neighborhood} onChange={(value) => updateResponsible('neighborhood', value)} required />
+                            <TextField label="Telefone" value={responsible.phone} onChange={(value) => updateResponsible('phone', value)} required />
+                            <TextField label="E-mail" value={responsible.email} onChange={(value) => updateResponsible('email', value)} type="email" hint="Use um e-mail de contato, se tiver" />
+                            <label className="check-row span-2">
+                              <input
+                                type="checkbox"
+                                checked={responsible.cityAdultConfirmed}
+                                onChange={(event) => updateResponsible('cityAdultConfirmed', event.target.checked)}
+                              />
+                              <span>O responsável substituto reside em Nova Iguaçu e é maior de 18 anos</span>
+                            </label>
+                          </div>
+                        </div>
+                      ) : null}
                     </>
                   )}
                   <label className="check-row span-2">
@@ -709,7 +885,7 @@ function Wizard({ auth, onDone }) {
                             key={clinic.id}
                             type="button"
                             className={`wiz-clinic-opt ${selectedClinicId === clinic.id ? 'active' : ''} ${hasSlots ? '' : 'unavailable'}`}
-                            onClick={() => hasSlots && setSelectedClinicId(clinic.id)}
+                            onClick={() => hasSlots && chooseClinic(clinic.id)}
                             disabled={!hasSlots}
                           >
                             <Building2 size={20} />
@@ -729,17 +905,57 @@ function Wizard({ auth, onDone }) {
               ) : null}
 
               {step === 5 ? (
+                <div className="wiz-date-step">
+                  <p className="wiz-clinic-hint">Escolha a data de atendimento. Só aparecem dias com vagas disponíveis para a clínica e o tipo de animal selecionados.</p>
+                  {datesLoading ? (
+                    <Loading label="Buscando datas disponíveis" />
+                  ) : availableDates.length === 0 ? (
+                    <div className="wiz-no-clinics">
+                      <AlertCircle size={20} />
+                      <span>Nenhuma data disponível para a clínica selecionada neste momento.</span>
+                    </div>
+                  ) : (
+                    <div className="wiz-date-list">
+                      {availableDates.map((item) => {
+                        const availableSlots = Number(item.available_slots || 0);
+                        return (
+                          <button
+                            key={item.date}
+                            type="button"
+                            className={`wiz-date-opt ${selectedDate === item.date ? 'active' : ''}`}
+                            onClick={() => setSelectedDate(item.date)}
+                          >
+                            <Calendar size={20} />
+                            <span>{formatDate(item.date)}</span>
+                            <strong>{availableSlots} vaga{availableSlots !== 1 ? 's' : ''}</strong>
+                          </button>
+                        );
+                      })}
+                    </div>
+                  )}
+                </div>
+              ) : null}
+
+              {step === 6 ? (
                 <div className="wiz-confirm">
                   <div className="wiz-confirm-icon">
                     <ClipboardCheck size={30} />
                   </div>
                   <h3>Confirme o agendamento</h3>
-                  <p>Depois de confirmar, o agendamento aparecerá na sua área do tutor com protocolo, clínica, data e horário. Lembre-se de levar as cópias dos documentos no dia.</p>
+                  <p>Depois de confirmar, o agendamento aparecerá na sua área do tutor com protocolo, clínica, data e horário. O sistema atribuirá o primeiro horário disponível no dia escolhido.</p>
                   <div className="wiz-review-grid">
                     <span>Perfil</span><strong>{userRoleLabel(auth?.user?.role)}</strong>
                     <span>Animal</span><strong>{animal.name} · {animalLabel(animal.species, animal.sex)}</strong>
                     <span>Raça e idade</span><strong>{animal.breed} · {animal.approximateAge}</strong>
                     <span>Clínica</span><strong>{clinics.find((c) => c.id === selectedClinicId)?.name || '—'}</strong>
+                    <span>Data</span><strong>{formatDate(selectedDate)}</strong>
+                    <span>Responsável no atendimento</span><strong>{responsible.enabled ? responsible.name : auth?.user?.name}</strong>
+                    {responsible.enabled ? (
+                      <>
+                        <span>CPF do responsável</span><strong>{maskCpf(responsible.cpf)}</strong>
+                        <span>Telefone do responsável</span><strong>{responsible.phone}</strong>
+                      </>
+                    ) : null}
                   </div>
                 </div>
               ) : null}
@@ -926,6 +1142,7 @@ function UserDashboard({ auth, setView }) {
               <strong>{formatDate(appointment.date)} às {appointment.time}</strong>
               <span>{appointment.clinic}</span>
               {appointment.clinic_address ? <span>{appointment.clinic_address}</span> : null}
+              {appointment.substitute_responsible ? <span>Responsável: {appointment.responsible_name}</span> : null}
             </div>
             <StatusBadge status={appointment.status} label={appointment.status_label} />
             {appointment.status === 'agendado' ? (
@@ -1996,6 +2213,38 @@ function SlotsTab({ slots, clinics, reload, auth }) {
   );
 }
 
+function AppointmentResponsibleInfo({ appointment }) {
+  if (!appointment.substitute_responsible) {
+    return (
+      <div className="responsible-cell">
+        <strong>Tutor principal</strong>
+        <span>{appointment.user_name}</span>
+        <span>CPF: {maskCpf(appointment.user_cpf || '')}</span>
+        <span>{appointment.user_phone || '-'}</span>
+      </div>
+    );
+  }
+
+  const address = [
+    appointment.responsible_address,
+    appointment.responsible_address_number,
+    appointment.responsible_neighborhood
+  ].filter(Boolean).join(', ');
+
+  return (
+    <div className="responsible-cell substitute">
+      <strong>{appointment.responsible_name || '-'}</strong>
+      <span>Responsável substituto</span>
+      <span>CPF: {maskCpf(appointment.responsible_cpf || '')}</span>
+      <span>CEP: {maskCep(appointment.responsible_cep || '')}</span>
+      <span>{address || '-'}</span>
+      <span>{appointment.responsible_phone || '-'}</span>
+      {appointment.responsible_email ? <span>{appointment.responsible_email}</span> : null}
+      <span>{appointment.responsible_city_confirmed && appointment.responsible_adult_confirmed ? 'Residência e maioridade confirmadas' : 'Confirmação pendente'}</span>
+    </div>
+  );
+}
+
 function AppointmentsTab({ appointments, reload, auth }) {
   const [drafts, setDrafts] = useState({});
   const [rowErrors, setRowErrors] = useState({});
@@ -2042,12 +2291,13 @@ function AppointmentsTab({ appointments, reload, auth }) {
     <div className="admin-section">
       <DataTable
         className="appointments-table"
-        columns={['Nome', 'Contato', 'Animal', 'Horário', 'Documentos', 'Status', 'Microchip', 'Motivo', 'Ação']}
+        columns={['Tutor', 'Contato', 'Responsável no atendimento', 'Animal', 'Horário', 'Documentos', 'Status', 'Microchip', 'Motivo', 'Ação']}
         rows={appointments.map((appointment) => {
           const draft = draftFor(appointment);
           return [
             appointment.user_name,
             appointment.user_phone,
+            <AppointmentResponsibleInfo key={`responsible-${appointment.id}`} appointment={appointment} />,
             `${appointment.animal_name} · ${appointment.animal_type_label}`,
             `${formatDate(appointment.date)} ${appointment.time} · ${appointment.clinic}${appointment.clinic_address ? ` · ${appointment.clinic_address}` : ''}`,
             <div key={`docs-${appointment.id}`} className="doc-chips">
@@ -2469,6 +2719,13 @@ function ResultPanel({ appointment }) {
         <span>Clínica</span><strong>{appointment.clinic}</strong>
         <span>Endereço</span><strong>{appointment.clinic_address || 'A confirmar'}</strong>
         <span>Animal</span><strong>{appointment.animal_name} · {appointment.animal_type_label}</strong>
+        <span>Responsável</span><strong>{appointment.substitute_responsible ? appointment.responsible_name : appointment.user_name}</strong>
+        {appointment.substitute_responsible ? (
+          <>
+            <span>CPF</span><strong>{maskCpf(appointment.responsible_cpf || '')}</strong>
+            <span>Telefone</span><strong>{appointment.responsible_phone || '-'}</strong>
+          </>
+        ) : null}
       </div>
       <p className="wiz-result-note">Chegue no máximo 30 minutos antes do horário agendado.</p>
     </div>
@@ -2568,6 +2825,12 @@ function maskCpf(value = '') {
   const digits = String(value).replace(/\D/g, '');
   if (digits.length !== 11) return value;
   return `${digits.slice(0, 3)}.${digits.slice(3, 6)}.${digits.slice(6, 9)}-${digits.slice(9)}`;
+}
+
+function maskCep(value = '') {
+  const digits = onlyDigits(value);
+  if (digits.length !== 8) return value || '-';
+  return `${digits.slice(0, 5)}-${digits.slice(5)}`;
 }
 
 function capitalize(value = '') {

@@ -104,6 +104,17 @@ export function initSchema() {
       reason TEXT,
       requirements_accepted INTEGER NOT NULL DEFAULT 0,
       documents_accepted INTEGER NOT NULL DEFAULT 0,
+      substitute_responsible INTEGER NOT NULL DEFAULT 0,
+      responsible_name TEXT,
+      responsible_cpf TEXT,
+      responsible_cep TEXT,
+      responsible_address TEXT,
+      responsible_address_number TEXT,
+      responsible_neighborhood TEXT,
+      responsible_phone TEXT,
+      responsible_email TEXT,
+      responsible_city_confirmed INTEGER NOT NULL DEFAULT 0,
+      responsible_adult_confirmed INTEGER NOT NULL DEFAULT 0,
       protocol TEXT NOT NULL UNIQUE,
       created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
       updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
@@ -125,6 +136,17 @@ export function initSchema() {
   ensureColumn('users', 'doc_identidade', 'TEXT');
   ensureColumn('users', 'email', 'TEXT');
   ensureColumn('appointments', 'microchip', 'TEXT');
+  ensureColumn('appointments', 'substitute_responsible', 'INTEGER NOT NULL DEFAULT 0');
+  ensureColumn('appointments', 'responsible_name', 'TEXT');
+  ensureColumn('appointments', 'responsible_cpf', 'TEXT');
+  ensureColumn('appointments', 'responsible_cep', 'TEXT');
+  ensureColumn('appointments', 'responsible_address', 'TEXT');
+  ensureColumn('appointments', 'responsible_address_number', 'TEXT');
+  ensureColumn('appointments', 'responsible_neighborhood', 'TEXT');
+  ensureColumn('appointments', 'responsible_phone', 'TEXT');
+  ensureColumn('appointments', 'responsible_email', 'TEXT');
+  ensureColumn('appointments', 'responsible_city_confirmed', 'INTEGER NOT NULL DEFAULT 0');
+  ensureColumn('appointments', 'responsible_adult_confirmed', 'INTEGER NOT NULL DEFAULT 0');
   db.exec(`CREATE UNIQUE INDEX IF NOT EXISTS idx_appointments_microchip ON appointments(microchip) WHERE microchip IS NOT NULL`);
 }
 

@@ -1481,6 +1481,29 @@ tr:last-child td {
   white-space: nowrap;
 }
 
+.responsible-cell {
+  display: grid;
+  gap: 3px;
+  min-width: 0;
+  font-size: 0.8rem;
+  line-height: 1.35;
+}
+
+.responsible-cell strong {
+  color: var(--ink);
+  font-size: 0.86rem;
+}
+
+.responsible-cell span {
+  min-width: 0;
+  overflow-wrap: anywhere;
+  color: var(--muted);
+}
+
+.responsible-cell.substitute strong {
+  color: var(--primary-dark);
+}
+
 .table-save {
   min-height: 36px;
   padding: 0 12px;
@@ -1493,7 +1516,7 @@ tr:last-child td {
 
 .appointments-table table {
   table-layout: fixed;
-  min-width: 1296px;
+  min-width: 1560px;
 }
 
 .appointments-table th:nth-child(1),
@@ -1508,36 +1531,41 @@ tr:last-child td {
 
 .appointments-table th:nth-child(3),
 .appointments-table td:nth-child(3) {
-  width: 125px;
+  width: 260px;
 }
 
 .appointments-table th:nth-child(4),
 .appointments-table td:nth-child(4) {
-  width: 210px;
+  width: 125px;
 }
 
 .appointments-table th:nth-child(5),
 .appointments-table td:nth-child(5) {
-  width: 115px;
+  width: 210px;
 }
 
 .appointments-table th:nth-child(6),
 .appointments-table td:nth-child(6) {
-  width: 116px;
+  width: 115px;
 }
 
 .appointments-table th:nth-child(7),
 .appointments-table td:nth-child(7) {
-  width: 160px;
+  width: 116px;
 }
 
 .appointments-table th:nth-child(8),
 .appointments-table td:nth-child(8) {
-  width: 210px;
+  width: 160px;
 }
 
 .appointments-table th:nth-child(9),
 .appointments-table td:nth-child(9) {
+  width: 210px;
+}
+
+.appointments-table th:nth-child(10),
+.appointments-table td:nth-child(10) {
   width: 100px;
 }
 
@@ -1577,8 +1605,8 @@ tr:last-child td {
 }
 
 @media (max-width: 1360px) {
-  .appointments-table th:nth-child(9),
-  .appointments-table td:nth-child(9) {
+  .appointments-table th:nth-child(10),
+  .appointments-table td:nth-child(10) {
     position: sticky;
     right: 0;
     z-index: 1;
@@ -1586,7 +1614,7 @@ tr:last-child td {
     box-shadow: -8px 0 16px rgba(15, 12, 80, 0.08);
   }
 
-  .appointments-table th:nth-child(9) {
+  .appointments-table th:nth-child(10) {
     z-index: 2;
     background: var(--surface-strong);
   }
@@ -1995,6 +2023,33 @@ tr:last-child td {
 }
 
 /* ── Step 2 terms ── */
+
+.substitute-form {
+  display: grid;
+  gap: 14px;
+  padding: 16px;
+  background: #fbfcff;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+}
+
+.substitute-form-title {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--primary-dark);
+}
+
+.substitute-form-title svg {
+  color: var(--primary);
+}
+
+.substitute-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  align-items: start;
+  gap: 14px;
+}
 
 .wiz-terms {
   display: grid;
@@ -2428,6 +2483,56 @@ tr:last-child td {
   background: rgba(90, 94, 138, 0.12);
 }
 
+.wiz-date-step {
+  display: grid;
+  gap: 16px;
+}
+
+.wiz-date-list {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+  gap: 10px;
+}
+
+.wiz-date-opt {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  align-items: center;
+  gap: 8px 10px;
+  min-height: 82px;
+  padding: 14px;
+  color: var(--ink);
+  background: var(--surface);
+  border: 2px solid var(--line);
+  border-radius: 12px;
+  text-align: left;
+  transition: border-color 0.15s, background 0.15s;
+}
+
+.wiz-date-opt:hover {
+  border-color: var(--primary);
+  background: rgba(12, 146, 120, 0.04);
+}
+
+.wiz-date-opt.active {
+  border-color: var(--primary);
+  background: rgba(12, 146, 120, 0.08);
+}
+
+.wiz-date-opt svg {
+  color: var(--primary);
+}
+
+.wiz-date-opt span {
+  font-weight: 800;
+}
+
+.wiz-date-opt strong {
+  grid-column: 1 / -1;
+  color: var(--ok);
+  font-size: 0.82rem;
+}
+
 /* ── Result ── */
 
 .wiz-result {
@@ -2527,6 +2632,7 @@ tr:last-child td {
   }
 
   .wiz-form-grid,
+  .substitute-grid,
   .wiz-text-grid,
   .wiz-pickers-row {
     grid-template-columns: 1fr;

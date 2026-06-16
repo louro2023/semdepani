@@ -24,8 +24,10 @@ Na primeira execução o sistema cria o banco SQLite em `data/castracao.sqlite`,
 
 - Tutor: 1 agendamento por mês.
 - Protetor: até 4 agendamentos por mês.
+- O usuário escolhe a clínica e a data do atendimento.
 - O usuário não escolhe horário.
-- O backend seleciona automaticamente a primeira vaga futura compatível com espécie e sexo do animal.
+- O backend seleciona automaticamente o primeiro horário disponível na clínica ativa e data escolhidas, compatível com espécie e sexo do animal.
+- Datas lotadas não aparecem para novos agendamentos.
 - Vagas controlam data, hora, quantidade, clínica, espécie e sexo.
 - Cancelamento libera a vaga.
 - Administrador pode criar vagas, usuários/protetores e marcar agendamentos como realizado, não realizado ou cancelado.

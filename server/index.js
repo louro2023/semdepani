@@ -143,6 +143,44 @@ app.get('/api/clinics/available', (req, res) => {
   res.json({ clinics });
 });
 
+app.get('/api/clinics/:clinicId/available-dates', (req, res) => {
+  try {
+    const { species, sex } = req.query;
+    const clinicId = Number(req.params.clinicId);
+    if (!Number.isInteger(clinicId) || clinicId <= 0) throw httpError(400, 'Clinica invalida.');
+    if (!['cao', 'gato'].includes(species)) throw httpError(400, 'Selecione a especie.');
+    if (!['macho', 'femea'].includes(sex)) throw httpError(400, 'Selecione o sexo.');
+
+    const targetMonth = bookingTargetMonth();
+    const dates = db.prepare(`
+      SELECT
+        s.date,
+        MIN(s.time) AS first_time,
+        SUM(s.total_quantity - s.occupied_quantity) AS available_slots
+      FROM slots s
+      JOIN clinics c ON c.id = s.clinic_id
+      WHERE c.id = ?
+        AND c.active = 1
+        AND s.active = 1
+        AND strftime('%Y-%m', s.date) = ?
+        AND s.date >= date('now', 'localtime')
+        AND s.species = ?
+        AND s.sex = ?
+        AND s.occupied_quantity < s.total_quantity
+      GROUP BY s.date
+      HAVING available_slots > 0
+      ORDER BY s.date ASC
+    `).all(clinicId, targetMonth, species, sex).map((row) => ({
+      ...row,
+      available_slots: Number(row.available_slots || 0)
+    }));
+
+    res.json({ dates });
+  } catch (error) {
+    sendError(res, error);
+  }
+});
+
 app.get('/api/availability', (_req, res) => {
   const rows = db.prepare(`
     SELECT species, sex, SUM(total_quantity) AS total, SUM(occupied_quantity) AS occupied
@@ -203,11 +241,15 @@ app.post('/api/auth/register', async (req, res) => {
 
 app.post('/api/public/inscricao', async (req, res) => {
   try {
-    const { user, animal, terms, role = 'tutor', clinicId = null } = req.body;
+    const { user, animal, terms, role = 'tutor', clinicId = null, date = '' } = req.body;
     validateTerms(terms);
     await lookupNovaIguacuCep(user?.cep || user?.zipCode);
     const savedUser = registerOrActivateUser(user, role, { allowExistingPassword: true });
-    const appointment = createAutomaticAppointment(savedUser, animal, terms, clinicId);
+    const appointment = await createAutomaticAppointment(savedUser, animal, terms, {
+      clinicId,
+      date,
+      responsible: req.body.responsible || req.body.substituteResponsible || null
+    });
     res.status(201).json({
       token: signToken(savedUser),
       user: publicUser(savedUser),
@@ -307,11 +349,15 @@ app.get('/api/documents/:userId/:type', requireAppointmentManager, (req, res) =>
   }
 });
 
-app.post('/api/appointments/auto', requireAuth, (req, res) => {
+app.post('/api/appointments/auto', requireAuth, async (req, res) => {
   try {
     const user = getUserById(req.user.id);
     validateTerms(req.body.terms);
-    const appointment = createAutomaticAppointment(user, req.body.animal, req.body.terms, req.body.clinicId || null);
+    const appointment = await createAutomaticAppointment(user, req.body.animal, req.body.terms, {
+      clinicId: req.body.clinicId || null,
+      date: req.body.date || req.body.appointmentDate || '',
+      responsible: req.body.responsible || req.body.substituteResponsible || null
+    });
     res.status(201).json({ appointment });
   } catch (error) {
     sendError(res, error);
@@ -1017,11 +1063,77 @@ function parseClinic(input = {}) {
   return clinic;
 }
 
-function createAutomaticAppointment(user, animalInput, terms, clinicId) {
+async function parseSubstituteResponsible(input = {}) {
+  input = input || {};
+  const enabled = input.enabled === true
+    || input.substituteResponsible === true
+    || input.substitute_responsible === true
+    || input.useSubstitute === true;
+  if (!enabled) {
+    return {
+      substitute_responsible: 0,
+      name: null,
+      cpf: null,
+      cep: null,
+      address: null,
+      address_number: null,
+      neighborhood: null,
+      phone: null,
+      email: null,
+      city_confirmed: 0,
+      adult_confirmed: 0
+    };
+  }
+
+  const addressNumberMissing = input.addressNumberMissing === true
+    || input.address_number_missing === true
+    || input.noAddressNumber === true;
+  const data = {
+    substitute_responsible: 1,
+    name: normalizeText(input.name || input.responsibleName),
+    cpf: normalizeCpf(input.cpf || input.responsibleCpf),
+    cep: normalizeCpf(input.cep || input.zipCode || input.responsibleCep),
+    address: normalizeText(input.address || input.responsibleAddress),
+    address_number: addressNumberMissing ? 'S/N' : normalizeText(input.addressNumber || input.address_number || input.responsibleAddressNumber),
+    neighborhood: normalizeText(input.neighborhood || input.responsibleNeighborhood),
+    phone: normalizePhone(input.phone || input.responsiblePhone),
+    email: normalizeText(input.email || input.responsibleEmail || ''),
+    city_confirmed: 1,
+    adult_confirmed: 1
+  };
+
+  if (!data.name) throw httpError(400, 'Informe o nome completo do responsavel substituto.');
+  if (!isValidCpf(data.cpf)) throw httpError(400, 'CPF do responsavel substituto invalido. Verifique os digitos informados.');
+  if (data.cep.length !== 8) throw httpError(400, 'Informe um CEP valido com 8 digitos para o responsavel substituto.');
+  if (!data.address) throw httpError(400, 'Informe o endereco completo do responsavel substituto.');
+  if (!data.address_number) throw httpError(400, 'Informe o numero da residencia do responsavel substituto ou marque a opcao sem numero.');
+  if (!data.neighborhood) throw httpError(400, 'Informe o bairro do responsavel substituto.');
+  if (!data.phone) throw httpError(400, 'Informe o telefone do responsavel substituto.');
+  if (data.email && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(data.email)) throw httpError(400, 'E-mail do responsavel substituto invalido.');
+  if (!input.cityAdultConfirmed && !input.responsibleCityAdultConfirmed) {
+    throw httpError(400, 'Confirme que o responsavel substituto reside em Nova Iguacu e e maior de 18 anos.');
+  }
+
+  await lookupNovaIguacuCep(data.cep);
+  return data;
+}
+
+async function createAutomaticAppointment(user, animalInput, terms, options = {}) {
   if (!['tutor', 'protetor', 'admin'].includes(user.role)) {
     throw httpError(403, 'Somente tutores, protetores cadastrados e administradores podem solicitar agendamento.');
   }
   const animal = parseAnimal(animalInput);
+  const responsible = await parseSubstituteResponsible(options.responsible);
+  const clinicId = Number(options.clinicId);
+  const requestedDate = normalizeText(options.date);
+  if (!Number.isInteger(clinicId) || clinicId <= 0) throw httpError(400, 'Selecione uma clinica disponivel para continuar.');
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(requestedDate)) throw httpError(400, 'Selecione uma data disponivel para continuar.');
+
+  const targetMonth = bookingTargetMonth();
+  if (requestedDate.slice(0, 7) !== targetMonth) {
+    throw httpError(400, 'Selecione uma data disponivel para o periodo atual de agendamento.');
+  }
+
   const limit = getAppointmentLimit(user.role);
   let appointmentId;
 
@@ -1032,59 +1144,72 @@ function createAutomaticAppointment(user, animalInput, terms, clinicId) {
       VALUES (?, ?, ?, ?, ?, ?)
     `).run(user.id, animal.name, animal.species, animal.sex, animal.breed, animal.approximate_age);
 
-    const targetMonth = bookingTargetMonth();
-    const slots = clinicId
-      ? db.prepare(`
-          SELECT * FROM slots
-          WHERE active = 1
-            AND strftime('%Y-%m', date) = ?
-            AND date >= date('now', 'localtime')
-            AND species = ? AND sex = ?
-            AND occupied_quantity < total_quantity
-            AND clinic_id = ?
-          ORDER BY date ASC, time ASC, id ASC
-        `).all(targetMonth, animal.species, animal.sex, clinicId)
-      : db.prepare(`
-          SELECT * FROM slots
-          WHERE active = 1
-            AND strftime('%Y-%m', date) = ?
-            AND date >= date('now', 'localtime')
-            AND species = ? AND sex = ?
-            AND occupied_quantity < total_quantity
-          ORDER BY date ASC, time ASC, id ASC
-        `).all(targetMonth, animal.species, animal.sex);
+    const slots = db.prepare(`
+      SELECT s.* FROM slots s
+      JOIN clinics c ON c.id = s.clinic_id
+      WHERE c.active = 1
+        AND s.active = 1
+        AND s.date = ?
+        AND s.date >= date('now', 'localtime')
+        AND s.species = ? AND s.sex = ?
+        AND s.occupied_quantity < s.total_quantity
+        AND s.clinic_id = ?
+      ORDER BY s.time ASC, s.id ASC
+    `).all(requestedDate, animal.species, animal.sex, clinicId);
 
     if (!slots.length) {
-      throw httpError(409, clinicId
-        ? `Não há vagas disponíveis para ${animalTypeLabel(animal.species, animal.sex)} na clínica selecionada.`
-        : `Não há vagas disponíveis para ${animalTypeLabel(animal.species, animal.sex)}.`
-      );
+      throw httpError(409, `Nao ha vagas disponiveis para ${animalTypeLabel(animal.species, animal.sex)} na data e clinica selecionadas.`);
     }
 
     const selectedSlot = slots[0];
     const currentUsage = getMonthlyUsage(user.id, selectedSlot.date);
     if (limit !== null && currentUsage >= limit) {
-      throw httpError(409, `Limite de ${limit} agendamento(s) por mês atingido.`);
+      throw httpError(409, `Limite de ${limit} agendamento(s) por mes atingido.`);
     }
 
     const update = db.prepare(`
       UPDATE slots
       SET occupied_quantity = occupied_quantity + 1, updated_at = CURRENT_TIMESTAMP
-      WHERE id = ? AND date >= date('now', 'localtime') AND occupied_quantity < total_quantity
+      WHERE id = ?
+        AND active = 1
+        AND date >= date('now', 'localtime')
+        AND occupied_quantity < total_quantity
+        AND EXISTS (
+          SELECT 1 FROM clinics c
+          WHERE c.id = slots.clinic_id
+            AND c.active = 1
+        )
     `).run(selectedSlot.id);
     if (update.changes !== 1) throw httpError(409, 'A vaga acabou de ser preenchida. Tente novamente.');
 
     const protocol = createProtocol();
     const appointmentResult = db.prepare(`
       INSERT INTO appointments
-        (user_id, animal_id, slot_id, status, requirements_accepted, documents_accepted, protocol)
-      VALUES (?, ?, ?, 'agendado', ?, ?, ?)
+        (
+          user_id, animal_id, slot_id, status, requirements_accepted, documents_accepted,
+          substitute_responsible, responsible_name, responsible_cpf, responsible_cep,
+          responsible_address, responsible_address_number, responsible_neighborhood,
+          responsible_phone, responsible_email, responsible_city_confirmed,
+          responsible_adult_confirmed, protocol
+        )
+      VALUES (?, ?, ?, 'agendado', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `).run(
       user.id,
       animalResult.lastInsertRowid,
       selectedSlot.id,
       terms.requirementsAccepted ? 1 : 0,
       terms.documentsAccepted ? 1 : 0,
+      responsible.substitute_responsible,
+      responsible.name,
+      responsible.cpf,
+      responsible.cep,
+      responsible.address,
+      responsible.address_number,
+      responsible.neighborhood,
+      responsible.phone,
+      responsible.email,
+      responsible.city_confirmed,
+      responsible.adult_confirmed,
       protocol
     );
     appointmentId = appointmentResult.lastInsertRowid;
@@ -1144,6 +1269,17 @@ function listAppointments({ userId, clinicId, appointmentId } = {}) {
       a.microchip,
       a.protocol,
       a.created_at,
+      a.substitute_responsible,
+      a.responsible_name,
+      a.responsible_cpf,
+      a.responsible_cep,
+      a.responsible_address,
+      a.responsible_address_number,
+      a.responsible_neighborhood,
+      a.responsible_phone,
+      a.responsible_email,
+      a.responsible_city_confirmed,
+      a.responsible_adult_confirmed,
       u.id AS user_id,
       u.name AS user_name,
       u.cpf AS user_cpf,
@@ -1353,6 +1489,9 @@ function signToken(user) {
 function formatAppointment(row) {
   return {
     ...row,
+    substitute_responsible: Boolean(row.substitute_responsible),
+    responsible_city_confirmed: Boolean(row.responsible_city_confirmed),
+    responsible_adult_confirmed: Boolean(row.responsible_adult_confirmed),
     animal_type_label: animalTypeLabel(row.species, row.sex),
     status_label: statusLabel(row.status)
   };

@@ -354,6 +354,17 @@ Em `users`:
 
 Em `appointments`:
 - `microchip TEXT` — indice unico `idx_appointments_microchip` criado automaticamente
+- `substitute_responsible INTEGER NOT NULL DEFAULT 0` — flag para responsável substituto
+- `responsible_name TEXT` — nome do responsável substituto
+- `responsible_cpf TEXT` — CPF do responsável substituto
+- `responsible_cep TEXT` — CEP do responsável substituto
+- `responsible_address TEXT` — endereço do responsável substituto
+- `responsible_address_number TEXT` — número da residência (ou 'S/N')
+- `responsible_neighborhood TEXT` — bairro do responsável substituto
+- `responsible_phone TEXT` — telefone do responsável substituto
+- `responsible_email TEXT` — e-mail do responsável substituto (opcional)
+- `responsible_city_confirmed INTEGER NOT NULL DEFAULT 0` — confirmação de residência em Nova Iguaçu
+- `responsible_adult_confirmed INTEGER NOT NULL DEFAULT 0` — confirmação de maioridade
 
 O arquivo `server/db.js` chama `ensureColumn` e `CREATE UNIQUE INDEX IF NOT EXISTS` na inicializacao, entao o restart da aplicacao cria tudo automaticamente.
 
@@ -379,6 +390,12 @@ Se por algum motivo a migracao automatica nao executar, rode uma migracao segura
 
 ```bash
 node --input-type=module -e "import { db } from './server/db.js'; const cols = db.prepare('PRAGMA table_info(users)').all().map(c => c.name); if (!cols.includes('cep')) db.exec('ALTER TABLE users ADD COLUMN cep TEXT'); if (!cols.includes('address_number')) db.exec('ALTER TABLE users ADD COLUMN address_number TEXT'); console.log('users ok:', db.prepare('PRAGMA table_info(users)').all().map(c => c.name).filter(c => ['cep','address_number'].includes(c)).join(','));"
+```
+
+Para as colunas de responsável substituto em `appointments`, rode:
+
+```bash
+node --input-type=module -e "import { db } from './server/db.js'; const cols = db.prepare('PRAGMA table_info(appointments)').all().map(c => c.name); const needed = ['substitute_responsible', 'responsible_name', 'responsible_cpf', 'responsible_cep', 'responsible_address', 'responsible_address_number', 'responsible_neighborhood', 'responsible_phone', 'responsible_email', 'responsible_city_confirmed', 'responsible_adult_confirmed']; const missing = needed.filter(n => !cols.includes(n)); if (missing.length > 0) { missing.forEach(col => { const type = (col === 'substitute_responsible' || col.includes('confirmed')) ? 'INTEGER NOT NULL DEFAULT 0' : 'TEXT'; db.exec(\`ALTER TABLE appointments ADD COLUMN \${col} \${type}\`); }); db.exec('CREATE UNIQUE INDEX IF NOT EXISTS idx_appointments_microchip ON appointments(microchip) WHERE microchip IS NOT NULL'); console.log('✓ Migração concluída. Colunas adicionadas:', missing.join(', ')); } else { console.log('✓ Todas as colunas já existem'); }"
 ```
 
 Depois reinicie:
