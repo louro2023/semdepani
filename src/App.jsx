@@ -17,7 +17,6 @@ import {
   LogOut,
   MessageCircle,
   PawPrint,
-  Plus,
   Save,
   Shield,
   Trash2,
@@ -68,6 +67,28 @@ const emptyTerms = {
   documentsAccepted: false
 };
 
+const APPOINTMENT_STATUS_OPTIONS = [
+  ['agendado', 'Agendado'],
+  ['realizado', 'Realizado'],
+  ['nao_realizado', 'Não realizado'],
+  ['cancelado', 'Cancelado']
+];
+
+const MONTH_FILTER_OPTIONS = [
+  ['01', '1 - Janeiro'],
+  ['02', '2 - Fevereiro'],
+  ['03', '3 - Março'],
+  ['04', '4 - Abril'],
+  ['05', '5 - Maio'],
+  ['06', '6 - Junho'],
+  ['07', '7 - Julho'],
+  ['08', '8 - Agosto'],
+  ['09', '9 - Setembro'],
+  ['10', '10 - Outubro'],
+  ['11', '11 - Novembro'],
+  ['12', '12 - Dezembro']
+];
+
 const CPF_DIGITS_LENGTH = 11;
 const PASSWORD_MIN_LENGTH = 6;
 
@@ -92,7 +113,12 @@ async function request(path, options = {}, token) {
     headers,
     body: options.body ? JSON.stringify(options.body) : undefined
   });
-  const data = await response.json().catch(() => ({}));
+  let data = {};
+  try {
+    data = await response.json();
+  } catch (_error) {
+    throw new Error('Resposta inválida da API. Reinicie o servidor e tente novamente.');
+  }
   if (!response.ok) throw new Error(data.message || 'Não foi possível concluir a operação.');
   return data;
 }
@@ -1203,9 +1229,23 @@ function ClinicPanel({ auth }) {
   const [appointments, setAppointments] = useState([]);
   const [clinics, setClinics] = useState([]);
   const [selectedClinicId, setSelectedClinicId] = useState('');
+  const [selectedStatus, setSelectedStatus] = useState('');
+  const [selectedMonth, setSelectedMonth] = useState('');
+  const [tutorSearch, setTutorSearch] = useState('');
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(true);
   const isAdmin = auth.user.role === 'admin';
+  const filteredAppointments = useMemo(
+    () => {
+      const search = normalizeSearch(tutorSearch);
+      return appointments.filter((appointment) => (
+        (!selectedStatus || appointment.status === selectedStatus) &&
+        (!selectedMonth || getDateMonth(appointment.date) === selectedMonth) &&
+        (!search || normalizeSearch(appointment.user_name || '').includes(search))
+      ));
+    },
+    [appointments, selectedStatus, selectedMonth, tutorSearch]
+  );
 
   async function loadAppointments(showLoading = true) {
     if (showLoading) setLoading(true);
@@ -1244,7 +1284,7 @@ function ClinicPanel({ auth }) {
       <div className="section-title">
         <span className="eyebrow">{isAdmin ? 'Admin · Clínica' : 'Clínica'}</span>
         <h2>Agendamentos</h2>
-        {isAdmin ? <p>Escolha uma clínica para visualizar os agendamentos dela, ou mantenha todas selecionadas.</p> : null}
+        {isAdmin ? <p>Escolha uma clínica, status, mês e tutor para visualizar os agendamentos, ou mantenha os filtros em branco.</p> : null}
       </div>
       {error ? <InlineAlert message={error} /> : null}
       {isAdmin ? (
@@ -1258,10 +1298,37 @@ function ClinicPanel({ auth }) {
               ))}
             </select>
           </label>
+          <label className="field">
+            <span>Status</span>
+            <select value={selectedStatus} onChange={(event) => setSelectedStatus(event.target.value)}>
+              <option value="">Todos os status</option>
+              {APPOINTMENT_STATUS_OPTIONS.map(([value, label]) => (
+                <option key={value} value={value}>{label}</option>
+              ))}
+            </select>
+          </label>
+          <label className="field">
+            <span>Mês</span>
+            <select value={selectedMonth} onChange={(event) => setSelectedMonth(event.target.value)}>
+              <option value="">Todos os meses</option>
+              {MONTH_FILTER_OPTIONS.map(([value, label]) => (
+                <option key={value} value={value}>{label}</option>
+              ))}
+            </select>
+          </label>
+          <TextField label="Tutor" value={tutorSearch} onChange={setTutorSearch} />
+          <button className="button ghost" type="button" onClick={() => { setSelectedClinicId(''); setSelectedStatus(''); setSelectedMonth(''); setTutorSearch(''); }}>
+            Limpar filtros
+          </button>
+          <span className="filter-count">
+            {filteredAppointments.length === appointments.length
+              ? `${appointments.length} agendamento${appointments.length !== 1 ? 's' : ''}`
+              : `${filteredAppointments.length} de ${appointments.length} agendamentos`}
+          </span>
         </div>
       ) : null}
       {loading ? <Loading label="Carregando agendamentos" /> : (
-        <AppointmentsTab appointments={appointments} reload={() => loadAppointments(false)} auth={auth} />
+        <AppointmentsTab appointments={filteredAppointments} reload={() => loadAppointments(false)} auth={auth} />
       )}
       {!isAdmin ? <ChangePasswordForm auth={auth} /> : null}
     </section>
@@ -1459,7 +1526,7 @@ function ReportsTab({ reports }) {
   const { totals, perDay, perClinic, castrationsByClinic, castrationsByType, castrationsDetail = [] } = reports;
 
   function exportCsv(rows, headers, filename) {
-    const lines = [headers.join(','), ...rows.map((r) => headers.map((h) => `"${r[h] ?? ''}"`).join(','))];
+    const lines = [headers.join(','), ...rows.map((r) => headers.map((h) => `"${formatCsvValue(r[h], h)}"`).join(','))];
     const blob = new Blob([lines.join('\n')], { type: 'text/csv;charset=utf-8;' });
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
@@ -1673,7 +1740,7 @@ function AdminSummary({ summary, reports }) {
   if (!summary) return <Loading label="Carregando resumo" />;
 
   function exportCsv(rows, headers, filename) {
-    const lines = [headers.join(','), ...rows.map((r) => headers.map((h) => `"${r[h] ?? ''}"`).join(','))];
+    const lines = [headers.join(','), ...rows.map((r) => headers.map((h) => `"${formatCsvValue(r[h], h)}"`).join(','))];
     const blob = new Blob([lines.join('\n')], { type: 'text/csv;charset=utf-8;' });
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
@@ -1953,17 +2020,21 @@ function SlotsTab({ slots, clinics, reload, auth }) {
   const [filters, setFilters] = useState({ clinic_id: '', date: '', type: '', status: '' });
   const [error, setError] = useState('');
   const [selectedIds, setSelectedIds] = useState(new Set());
+  const [renewRows, setRenewRows] = useState(null);
+  const [renewError, setRenewError] = useState('');
   const [page, setPage] = useState(1);
 
   const clinicOptions = useMemo(() => clinics.filter((clinic) => clinic.active), [clinics]);
+  const selectedSlots = useMemo(() => slots.filter((slot) => selectedIds.has(slot.id)), [slots, selectedIds]);
 
   const filteredSlots = useMemo(() => {
+    const filterDate = toIsoDate(filters.date);
     return slots.filter((slot) => {
       const type = `${slot.species}-${slot.sex}`;
       const status = slot.active ? 'ativa' : 'inativa';
       return (
         (!filters.clinic_id || String(slot.clinic_id) === filters.clinic_id) &&
-        (!filters.date || slot.date === filters.date) &&
+        (!filterDate || toIsoDate(slot.date) === filterDate) &&
         (!filters.type || type === filters.type) &&
         (!filters.status || status === filters.status)
       );
@@ -2063,16 +2134,64 @@ function SlotsTab({ slots, clinics, reload, auth }) {
     }
   }
 
-  async function renew() {
+  function startRenew() {
     if (!selectedIds.size) return;
-    if (!confirm(`Renovar ${selectedIds.size} vaga(s) somando +1 mês na data?\n\nNovas vagas serão criadas com as mesmas configurações e data do mês seguinte.`)) return;
+    if (!selectedSlots.length) {
+      setError('Selecione ao menos uma vaga válida.');
+      return;
+    }
     setError('');
+    setRenewError('');
+    setRenewRows(selectedSlots.map((slot) => ({
+      source_id: slot.id,
+      source_date: slot.date,
+      source_time: slot.time,
+      source_label: slot.label,
+      source_clinic: slot.clinic,
+      date: addMonthToDate(slot.date),
+      time: slot.time,
+      species: slot.species,
+      sex: slot.sex,
+      clinic_id: String(slot.clinic_id || ''),
+      total_quantity: slot.total_quantity
+    })));
+  }
+
+  function updateRenewRow(index, patch) {
+    setRenewRows((current) => current.map((row, rowIndex) => (
+      rowIndex === index ? { ...row, ...patch } : row
+    )));
+  }
+
+  function updateRenewType(index, value) {
+    const [species, sex] = value.split('-');
+    updateRenewRow(index, { species, sex });
+  }
+
+  async function submitRenew(event) {
+    event.preventDefault();
+    if (!renewRows?.length) return;
+    setRenewError('');
     try {
-      await request('/admin/slots/renew', { method: 'POST', body: { ids: [...selectedIds] } }, auth.token);
+      await request('/admin/slots/renew', {
+        method: 'POST',
+        body: {
+          renewals: renewRows.map((row) => ({
+            id: row.source_id,
+            date: row.date,
+            time: row.time,
+            species: row.species,
+            sex: row.sex,
+            clinic_id: row.clinic_id,
+            total_quantity: Number(row.total_quantity)
+          }))
+        }
+      }, auth.token);
       setSelectedIds(new Set());
+      setRenewRows(null);
       reload();
     } catch (err) {
-      setError(err.message);
+      setRenewError(err.message);
     }
   }
 
@@ -2089,12 +2208,92 @@ function SlotsTab({ slots, clinics, reload, auth }) {
     reload();
   }
 
+  if (renewRows) {
+    return (
+      <div className="admin-section renewal-screen">
+        <div className="section-title renewal-title">
+          <span className="eyebrow">Renovação de vagas</span>
+          <h3>Definir novas vagas</h3>
+          <p>{renewRows.length} vaga{renewRows.length !== 1 ? 's' : ''} selecionada{renewRows.length !== 1 ? 's' : ''} para renovação.</p>
+        </div>
+        <form className="renewal-form" onSubmit={submitRenew}>
+          {renewError ? <InlineAlert message={renewError} /> : null}
+          <DataTable
+            className="renewal-table"
+            columns={['Vaga original', 'Nova data', 'Novo horário', 'Tipo', 'Clínica', 'Total de vagas']}
+            rows={renewRows.map((row, index) => [
+              <div key={`source-${row.source_id}`} className="renewal-source">
+                <strong>{formatDate(row.source_date)} {row.source_time}</strong>
+                <span>{capitalize(row.source_label)} · {row.source_clinic}</span>
+              </div>,
+              <DateInput
+                key={`date-${row.source_id}`}
+                className="table-input"
+                value={row.date}
+                onChange={(value) => updateRenewRow(index, { date: value })}
+                required
+              />,
+              <TimeInput
+                key={`time-${row.source_id}`}
+                className="table-input compact-table-input"
+                value={row.time}
+                onChange={(value) => updateRenewRow(index, { time: value })}
+                required
+              />,
+              <select
+                key={`type-${row.source_id}`}
+                value={`${row.species}-${row.sex}`}
+                onChange={(event) => updateRenewType(index, event.target.value)}
+                required
+              >
+                <option value="gato-femea">Gata</option>
+                <option value="gato-macho">Gato</option>
+                <option value="cao-femea">Cadela</option>
+                <option value="cao-macho">Cão</option>
+              </select>,
+              <select
+                key={`clinic-${row.source_id}`}
+                value={row.clinic_id}
+                onChange={(event) => updateRenewRow(index, { clinic_id: event.target.value })}
+                required
+              >
+                <option value="">Selecione</option>
+                {clinicOptions.map((clinic) => (
+                  <option key={clinic.id} value={clinic.id}>{clinic.name}</option>
+                ))}
+              </select>,
+              <input
+                key={`total-${row.source_id}`}
+                className="table-input compact-table-input"
+                type="number"
+                min="1"
+                value={row.total_quantity}
+                onChange={(event) => updateRenewRow(index, { total_quantity: Number(event.target.value) })}
+                required
+              />
+            ])}
+          />
+          <div className="form-actions renewal-actions">
+            <button className="button ghost" type="button" onClick={() => { setRenewRows(null); setRenewError(''); }}>
+              <XCircle size={18} />
+              Cancelar
+            </button>
+            <button className="button primary" type="submit">
+              <CalendarPlus size={18} />
+              Criar vagas renovadas
+            </button>
+          </div>
+        </form>
+      </div>
+    );
+  }
+
   return (
     <div className="admin-section">
       <form className="inline-form" onSubmit={save}>
         {error ? <InlineAlert message={error} /> : null}
-        <TextField label="Data" type="date" value={form.date} onChange={(value) => setForm({ ...form, date: value })} required />
-        <TextField label="Hora" type="time" value={form.time} onChange={(value) => setForm({ ...form, time: value })} required />
+        <DateField label="Data" value={form.date} onChange={(value) => setForm({ ...form, date: value })} required />
+        <TimeField label="Hora" value={form.time} onChange={(value) => setForm({ ...form, time: value })} required />
         <label className="field">
           <span>Espécie</span>
           <select value={form.species} onChange={(event) => setForm({ ...form, species: event.target.value })}>
@@ -2129,7 +2328,7 @@ function SlotsTab({ slots, clinics, reload, auth }) {
             {clinics.map((clinic) => <option key={clinic.id} value={clinic.id}>{clinic.name}</option>)}
           </select>
         </label>
-        <TextField label="Data" type="date" value={filters.date} onChange={(value) => setFilters({ ...filters, date: value })} />
+        <DateField label="Data" value={filters.date} onChange={(value) => setFilters({ ...filters, date: value })} />
         <label className="field">
           <span>Tipo</span>
           <select value={filters.type} onChange={(event) => setFilters({ ...filters, type: event.target.value })}>
@@ -2171,7 +2370,7 @@ function SlotsTab({ slots, clinics, reload, auth }) {
         <button className="button ghost" type="button" onClick={toggleSelectAll}>
           {allSelected ? 'Desmarcar Todas' : 'Selecionar Todas'}
         </button>
-        <button className="button primary" type="button" onClick={renew} disabled={!selectedIds.size}>
+        <button className="button primary" type="button" onClick={startRenew} disabled={!selectedIds.size}>
           <CalendarPlus size={18} />
           Renovar Vagas{selectedIds.size > 0 ? ` (${selectedIds.size})` : ''}
         </button>
@@ -2323,10 +2522,9 @@ function AppointmentsTab({ appointments, reload, auth }) {
               value={draft.status}
               onChange={(event) => setDrafts({ ...drafts, [appointment.id]: { ...draft, status: event.target.value } })}
             >
-              <option value="agendado">Agendado</option>
-              <option value="realizado">Realizado</option>
-              <option value="nao_realizado">Não realizado</option>
-              <option value="cancelado">Cancelado</option>
+              {APPOINTMENT_STATUS_OPTIONS.map(([value, label]) => (
+                <option key={value} value={value}>{label}</option>
+              ))}
             </select>,
             draft.status === 'realizado'
               ? <input
@@ -2752,6 +2950,120 @@ function TextField({ label, value, onChange, type = 'text', required = false, hi
   );
 }
 
+function DateField({ label, value, onChange, required = false, hint = 'Formato: DD/MM/AAAA', error = '', disabled = false }) {
+  return (
+    <label className="field">
+      <span>{label}{required ? ' *' : ''}</span>
+      <DateInput
+        value={value}
+        onChange={onChange}
+        required={required}
+        disabled={disabled}
+        ariaInvalid={Boolean(error)}
+      />
+      {error ? <small className="field-error">{error}</small> : null}
+      {!error && hint ? <small className="field-hint">{hint}</small> : null}
+    </label>
+  );
+}
+
+function DateInput({ value, onChange, required = false, disabled = false, className = '', ariaInvalid = false }) {
+  const [display, setDisplay] = useState(() => formatDateForInput(value));
+
+  useEffect(() => {
+    setDisplay(formatDateForInput(value));
+  }, [value]);
+
+  function handleChange(event) {
+    const nextDisplay = formatDateTyping(event.target.value);
+    setDisplay(nextDisplay);
+
+    if (!nextDisplay) {
+      onChange('');
+      return;
+    }
+
+    const iso = toIsoDate(nextDisplay);
+    onChange(iso || nextDisplay);
+  }
+
+  const hasInvalidCompleteDate = display.length === 10 && !toIsoDate(display);
+
+  return (
+    <input
+      className={className}
+      type="text"
+      value={display}
+      onChange={handleChange}
+      required={required}
+      disabled={disabled}
+      inputMode="numeric"
+      maxLength={10}
+      placeholder="dd/mm/aaaa"
+      pattern="\d{2}/\d{2}/\d{4}"
+      aria-invalid={ariaInvalid || hasInvalidCompleteDate}
+      title="Use o formato DD/MM/AAAA"
+    />
+  );
+}
+
+function TimeField({ label, value, onChange, required = false, hint = 'Formato: 24h, HH:MM', error = '', disabled = false }) {
+  return (
+    <label className="field">
+      <span>{label}{required ? ' *' : ''}</span>
+      <TimeInput
+        value={value}
+        onChange={onChange}
+        required={required}
+        disabled={disabled}
+        ariaInvalid={Boolean(error)}
+      />
+      {error ? <small className="field-error">{error}</small> : null}
+      {!error && hint ? <small className="field-hint">{hint}</small> : null}
+    </label>
+  );
+}
+
+function TimeInput({ value, onChange, required = false, disabled = false, className = '', ariaInvalid = false }) {
+  const [display, setDisplay] = useState(() => formatTimeForInput(value));
+
+  useEffect(() => {
+    setDisplay(formatTimeForInput(value));
+  }, [value]);
+
+  function handleChange(event) {
+    const nextDisplay = formatTimeTyping(event.target.value);
+    setDisplay(nextDisplay);
+
+    if (!nextDisplay) {
+      onChange('');
+      return;
+    }
+
+    const time = toTime24(nextDisplay);
+    onChange(time || nextDisplay);
+  }
+
+  const hasInvalidCompleteTime = display.length === 5 && !toTime24(display);
+
+  return (
+    <input
+      className={className}
+      type="text"
+      value={display}
+      onChange={handleChange}
+      required={required}
+      disabled={disabled}
+      inputMode="numeric"
+      maxLength={5}
+      placeholder="hh:mm"
+      pattern="([01]\d|2[0-3]):[0-5]\d"
+      aria-invalid={ariaInvalid || hasInvalidCompleteTime}
+      title="Use o formato 24h, HH:MM"
+    />
+  );
+}
+
 function Metric({ icon: Icon, label, value }) {
   return (
     <div className="metric">
@@ -2817,8 +3129,97 @@ function Loading({ label }) {
 
 function formatDate(value) {
   if (!value) return '-';
-  const [year, month, day] = value.split('-');
+  const iso = toIsoDate(value);
+  if (!iso) return value;
+  const [year, month, day] = iso.split('-');
   return `${day}/${month}/${year}`;
+}
+
+function formatDateForInput(value) {
+  const iso = toIsoDate(value);
+  if (iso) return formatDate(iso);
+  return value && value !== '-' ? String(value) : '';
+}
+
+function formatTimeForInput(value) {
+  const time = toTime24(value);
+  return time || (value ? String(value) : '');
+}
+
+function formatTimeTyping(value = '') {
+  const digits = onlyDigits(value).slice(0, 4);
+  if (digits.length <= 2) return digits;
+  return `${digits.slice(0, 2)}:${digits.slice(2)}`;
+}
+
+function toTime24(value = '') {
+  const raw = String(value || '').trim();
+  const match = raw.match(/^(\d{1,2}):(\d{2})$/);
+  if (match) {
+    const hour = Number(match[1]);
+    const minute = Number(match[2]);
+    if (hour >= 0 && hour <= 23 && minute >= 0 && minute <= 59) {
+      return `${String(hour).padStart(2, '0')}:${String(minute).padStart(2, '0')}`;
+    }
+    return '';
+  }
+
+  const digits = onlyDigits(raw);
+  if (digits.length === 4) return toTime24(`${digits.slice(0, 2)}:${digits.slice(2)}`);
+  return '';
+}
+
+function formatDateTyping(value = '') {
+  const digits = onlyDigits(value).slice(0, 8);
+  if (digits.length <= 2) return digits;
+  if (digits.length <= 4) return `${digits.slice(0, 2)}/${digits.slice(2)}`;
+  return `${digits.slice(0, 2)}/${digits.slice(2, 4)}/${digits.slice(4)}`;
+}
+
+function toIsoDate(value = '') {
+  const raw = String(value || '').trim();
+  const isoMatch = raw.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  if (isoMatch) return buildIsoDate(isoMatch[3], isoMatch[2], isoMatch[1]) === raw ? raw : '';
+
+  const brMatch = raw.match(/^(\d{2})\/(\d{2})\/(\d{4})$/);
+  if (brMatch) return buildIsoDate(brMatch[1], brMatch[2], brMatch[3]);
+
+  const digits = onlyDigits(raw);
+  if (digits.length === 8) return buildIsoDate(digits.slice(0, 2), digits.slice(2, 4), digits.slice(4));
+  return '';
+}
+
+function buildIsoDate(day, month, year) {
+  const y = Number(year);
+  const m = Number(month);
+  const d = Number(day);
+  if (!Number.isInteger(y) || !Number.isInteger(m) || !Number.isInteger(d) || y < 1900 || m < 1 || m > 12 || d < 1 || d > 31) return '';
+  const date = new Date(Date.UTC(y, m - 1, d));
+  if (date.getUTCFullYear() !== y || date.getUTCMonth() !== m - 1 || date.getUTCDate() !== d) return '';
+  return `${y}-${String(m).padStart(2, '0')}-${String(d).padStart(2, '0')}`;
+}
+
+function getDateMonth(value) {
+  return toIsoDate(value).slice(5, 7);
+}
+
+function formatCsvValue(value, header = '') {
+  if (value == null) return '';
+  if (['date', 'day'].includes(header) || String(header).toLowerCase().includes('data')) {
+    return formatDate(value);
+  }
+  return String(value).replace(/"/g, '""');
+}
+
+function addMonthToDate(value) {
+  const iso = toIsoDate(value);
+  if (!iso) return '';
+  const [year, month, day] = iso.split('-').map(Number);
+  const date = new Date(year, month, day);
+  const nextYear = date.getFullYear();
+  const nextMonth = String(date.getMonth() + 1).padStart(2, '0');
+  const nextDay = String(date.getDate()).padStart(2, '0');
+  return `${nextYear}-${nextMonth}-${nextDay}`;
 }
 
 function maskCpf(value = '') {

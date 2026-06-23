@@ -1185,7 +1185,7 @@ select:focus,
 
 .clinic-selector-bar {
   display: grid;
-  grid-template-columns: minmax(220px, 360px);
+  grid-template-columns: repeat(auto-fit, minmax(170px, 1fr));
   gap: 12px;
   align-items: end;
 }
@@ -1392,6 +1392,48 @@ select:focus,
   gap: 10px;
   padding: 10px 0;
   flex-wrap: wrap;
+}
+
+.renewal-screen {
+  gap: 18px;
+}
+
+.renewal-title {
+  margin-bottom: 0;
+}
+
+.renewal-form {
+  display: grid;
+  gap: 16px;
+}
+
+.renewal-source {
+  display: grid;
+  gap: 4px;
+  min-width: 170px;
+}
+
+.renewal-source span {
+  color: var(--muted);
+  font-size: 0.84rem;
+}
+
+.renewal-table table {
+  min-width: 1080px;
+}
+
+.renewal-table .table-input,
+.renewal-table select {
+  min-width: 140px;
+}
+
+.renewal-table .compact-table-input {
+  min-width: 110px;
+}
+
+.renewal-actions {
+  justify-content: flex-end;
+  margin-top: 0;
 }
 
 .import-bar {

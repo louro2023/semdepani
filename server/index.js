@@ -13,7 +13,6 @@ import nodemailer from 'nodemailer';
 import rateLimit from 'express-rate-limit';
 import {
   autoRenewSlots,
-  bookingTargetMonth,
   createProtocol,
   db,
   getUserByCpf,
@@ -124,22 +123,22 @@ app.get('/api/health', (_req, res) => {
 app.get('/api/clinics/available', (req, res) => {
   const { species, sex } = req.query;
   if (!species || !sex) return res.status(400).json({ message: 'species e sex são obrigatórios.' });
-  const targetMonth = bookingTargetMonth();
   const clinics = db.prepare(`
     SELECT c.id, c.name, c.address, c.neighborhood,
       COALESCE(SUM(s.total_quantity - s.occupied_quantity), 0) AS available_slots
     FROM clinics c
     LEFT JOIN slots s ON s.clinic_id = c.id
       AND s.active = 1
-      AND strftime('%Y-%m', s.date) = ?
       AND s.date >= date('now', 'localtime')
+      AND date('now', 'localtime') >= date(s.date, 'start of month', '-5 days')
+      AND datetime(s.date || ' ' || s.time) >= datetime('now', 'localtime', '+8 hours')
       AND s.species = ?
       AND s.sex = ?
       AND s.occupied_quantity < s.total_quantity
     WHERE c.active = 1
     GROUP BY c.id
     ORDER BY CASE WHEN available_slots > 0 THEN 0 ELSE 1 END, c.name
-  `).all(targetMonth, species, sex);
+  `).all(species, sex);
   res.json({ clinics });
 });
 
@@ -151,7 +150,6 @@ app.get('/api/clinics/:clinicId/available-dates', (req, res) => {
     if (!['cao', 'gato'].includes(species)) throw httpError(400, 'Selecione a especie.');
     if (!['macho', 'femea'].includes(sex)) throw httpError(400, 'Selecione o sexo.');
 
-    const targetMonth = bookingTargetMonth();
     const dates = db.prepare(`
       SELECT
         s.date,
@@ -162,15 +160,16 @@ app.get('/api/clinics/:clinicId/available-dates', (req, res) => {
       WHERE c.id = ?
         AND c.active = 1
         AND s.active = 1
-        AND strftime('%Y-%m', s.date) = ?
         AND s.date >= date('now', 'localtime')
+        AND date('now', 'localtime') >= date(s.date, 'start of month', '-5 days')
+        AND datetime(s.date || ' ' || s.time) >= datetime('now', 'localtime', '+8 hours')
         AND s.species = ?
         AND s.sex = ?
         AND s.occupied_quantity < s.total_quantity
       GROUP BY s.date
       HAVING available_slots > 0
       ORDER BY s.date ASC
-    `).all(clinicId, targetMonth, species, sex).map((row) => ({
+    `).all(clinicId, species, sex).map((row) => ({
       ...row,
       available_slots: Number(row.available_slots || 0)
     }));
@@ -185,7 +184,10 @@ app.get('/api/availability', (_req, res) => {
   const rows = db.prepare(`
     SELECT species, sex, SUM(total_quantity) AS total, SUM(occupied_quantity) AS occupied
     FROM slots
-    WHERE active = 1 AND date >= date('now', 'localtime')
+    WHERE active = 1
+      AND date >= date('now', 'localtime')
+      AND date('now', 'localtime') >= date(date, 'start of month', '-5 days')
+      AND datetime(date || ' ' || time) >= datetime('now', 'localtime', '+8 hours')
     GROUP BY species, sex
     ORDER BY species, sex
   `).all();
@@ -590,24 +592,43 @@ app.post('/api/admin/slots/auto-renew', requireAdmin, (_req, res) => {
 
 app.post('/api/admin/slots/renew', requireAdmin, (req, res) => {
   try {
+    const renewals = Array.isArray(req.body.renewals) ? req.body.renewals : null;
     const ids = req.body.ids;
-    if (!Array.isArray(ids) || ids.length === 0) throw httpError(400, 'Selecione ao menos uma vaga.');
+    if (renewals && renewals.length === 0) throw httpError(400, 'Selecione ao menos uma vaga.');
+    if (!renewals && (!Array.isArray(ids) || ids.length === 0)) throw httpError(400, 'Selecione ao menos uma vaga.');
     const created = [];
     db.exec('BEGIN IMMEDIATE');
     try {
-      for (const id of ids) {
-        const slot = getSlot(id);
-        if (!slot) throw httpError(404, `Vaga ${id} não encontrada.`);
-        const newDate = db.prepare("SELECT date(?, '+1 month') AS d").get(slot.date).d;
-        const result = db.prepare(`
-          INSERT INTO slots (date, time, species, sex, total_quantity, occupied_quantity, clinic_id, clinic, active)
-          VALUES (?, ?, ?, ?, ?, 0, ?, ?, 1)
-        `).run(newDate, slot.time, slot.species, slot.sex, slot.total_quantity, slot.clinic_id, slot.clinic);
-        created.push(getSlot(result.lastInsertRowid));
+      if (renewals) {
+        for (const renewal of renewals) {
+          const sourceId = Number(renewal.id || renewal.source_id || renewal.slot_id);
+          if (!Number.isInteger(sourceId) || sourceId <= 0) throw httpError(400, 'Seleção de vagas inválida.');
+          if (!getSlot(sourceId)) throw httpError(404, `Vaga ${sourceId} não encontrada.`);
+          const slot = parseSlot(renewal);
+          const result = db.prepare(`
+            INSERT INTO slots (date, time, species, sex, total_quantity, occupied_quantity, clinic_id, clinic, active)
+            VALUES (?, ?, ?, ?, ?, 0, ?, ?, 1)
+          `).run(slot.date, slot.time, slot.species, slot.sex, slot.total_quantity, slot.clinic_id, slot.clinic);
+          created.push(getSlot(result.lastInsertRowid));
+        }
+      } else {
+        for (const id of ids) {
+          const slot = getSlot(id);
+          if (!slot) throw httpError(404, `Vaga ${id} não encontrada.`);
+          const newDate = db.prepare("SELECT date(?, '+1 month') AS d").get(slot.date).d;
+          const result = db.prepare(`
+            INSERT INTO slots (date, time, species, sex, total_quantity, occupied_quantity, clinic_id, clinic, active)
+            VALUES (?, ?, ?, ?, ?, 0, ?, ?, 1)
+          `).run(newDate, slot.time, slot.species, slot.sex, slot.total_quantity, slot.clinic_id, slot.clinic);
+          created.push(getSlot(result.lastInsertRowid));
+        }
       }
       db.exec('COMMIT');
     } catch (err) {
       db.exec('ROLLBACK');
+      if (String(err.message).includes('UNIQUE')) {
+        throw httpError(409, 'Já existe uma vaga com a mesma data, horário, espécie, sexo e clínica.');
+      }
       throw err;
     }
     res.status(201).json({ slots: created, count: created.length });
@@ -825,6 +846,10 @@ app.get('/api/admin/protectors', requireAdmin, (_req, res) => {
   res.json({ protectors });
 });
 
+app.use('/api', (req, res) => {
+  res.status(404).json({ message: `Rota de API não encontrada: ${req.method} ${req.originalUrl}` });
+});
+
 const distDir = path.join(rootDir, 'dist');
 app.use(express.static(distDir));
 app.get(/.*/, (_req, res) => {
@@ -849,7 +874,9 @@ async function bootstrap() {
 }
 
 function formatDateBR(dateStr) {
-  const [y, m, d] = dateStr.split('-');
+  const iso = normalizeDateInput(dateStr);
+  if (!iso) return dateStr || '';
+  const [y, m, d] = iso.split('-');
   return `${d}/${m}/${y}`;
 }
 
@@ -1008,6 +1035,29 @@ function normalizeForComparison(value = '') {
     .toLowerCase();
 }
 
+function normalizeDateInput(value = '') {
+  const raw = normalizeText(value);
+  const isoMatch = raw.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  if (isoMatch) return buildIsoDate(isoMatch[3], isoMatch[2], isoMatch[1]) === raw ? raw : '';
+
+  const brMatch = raw.match(/^(\d{2})\/(\d{2})\/(\d{4})$/);
+  if (brMatch) return buildIsoDate(brMatch[1], brMatch[2], brMatch[3]);
+
+  const digits = raw.replace(/\D/g, '');
+  if (digits.length === 8) return buildIsoDate(digits.slice(0, 2), digits.slice(2, 4), digits.slice(4));
+  return '';
+}
+
+function buildIsoDate(day, month, year) {
+  const y = Number(year);
+  const m = Number(month);
+  const d = Number(day);
+  if (!Number.isInteger(y) || !Number.isInteger(m) || !Number.isInteger(d) || y < 1900 || m < 1 || m > 12 || d < 1 || d > 31) return '';
+  const date = new Date(Date.UTC(y, m - 1, d));
+  if (date.getUTCFullYear() !== y || date.getUTCMonth() !== m - 1 || date.getUTCDate() !== d) return '';
+  return `${y}-${String(m).padStart(2, '0')}-${String(d).padStart(2, '0')}`;
+}
+
 function validateTerms(terms = {}) {
   if (!terms.requirementsAccepted) throw httpError(400, 'Aceite os requisitos do programa.');
   if (!terms.documentsAccepted) throw httpError(400, 'Confirme que levará os documentos solicitados.');
@@ -1033,7 +1083,7 @@ function parseSlot(input = {}) {
   const clinicId = Number(input.clinic_id || input.clinicId);
   const clinic = Number.isInteger(clinicId) ? getClinic(clinicId) : null;
   const slot = {
-    date: normalizeText(input.date),
+    date: normalizeDateInput(input.date),
     time: normalizeText(input.time),
     species: input.species,
     sex: input.sex,
@@ -1125,14 +1175,9 @@ async function createAutomaticAppointment(user, animalInput, terms, options = {}
   const animal = parseAnimal(animalInput);
   const responsible = await parseSubstituteResponsible(options.responsible);
   const clinicId = Number(options.clinicId);
-  const requestedDate = normalizeText(options.date);
+  const requestedDate = normalizeDateInput(options.date);
   if (!Number.isInteger(clinicId) || clinicId <= 0) throw httpError(400, 'Selecione uma clinica disponivel para continuar.');
   if (!/^\d{4}-\d{2}-\d{2}$/.test(requestedDate)) throw httpError(400, 'Selecione uma data disponivel para continuar.');
-
-  const targetMonth = bookingTargetMonth();
-  if (requestedDate.slice(0, 7) !== targetMonth) {
-    throw httpError(400, 'Selecione uma data disponivel para o periodo atual de agendamento.');
-  }
 
   const limit = getAppointmentLimit(user.role);
   let appointmentId;
@@ -1151,6 +1196,8 @@ async function createAutomaticAppointment(user, animalInput, terms, options = {}
         AND s.active = 1
         AND s.date = ?
         AND s.date >= date('now', 'localtime')
+        AND date('now', 'localtime') >= date(s.date, 'start of month', '-5 days')
+        AND datetime(s.date || ' ' || s.time) >= datetime('now', 'localtime', '+8 hours')
         AND s.species = ? AND s.sex = ?
         AND s.occupied_quantity < s.total_quantity
         AND s.clinic_id = ?
@@ -1173,6 +1220,8 @@ async function createAutomaticAppointment(user, animalInput, terms, options = {}
       WHERE id = ?
         AND active = 1
         AND date >= date('now', 'localtime')
+        AND date('now', 'localtime') >= date(date, 'start of month', '-5 days')
+        AND datetime(date || ' ' || time) >= datetime('now', 'localtime', '+8 hours')
         AND occupied_quantity < total_quantity
         AND EXISTS (
           SELECT 1 FROM clinics c

@@ -412,21 +412,8 @@ export function monthRange(dateString) {
   return { start, end };
 }
 
-// Returns the booking target month (YYYY-MM).
-// From day 25 onwards, slots for next month are open.
-export function bookingTargetMonth() {
-  const today = db.prepare("SELECT date('now', 'localtime') AS d").get().d;
-  const day = parseInt(today.slice(8, 10), 10);
-  if (day >= 25) {
-    const [y, m] = today.slice(0, 7).split('-').map(Number);
-    const next = new Date(y, m, 1);
-    return `${next.getFullYear()}-${String(next.getMonth() + 1).padStart(2, '0')}`;
-  }
-  return today.slice(0, 7);
-}
-
 // Clones all active slots from current month into next month.
-// Safe to call multiple times — skips slots that already exist.
+// Safe to call multiple times - skips slots that already exist.
 // Only acts when day >= 25.
 export function autoRenewSlots() {
   const today = db.prepare("SELECT date('now', 'localtime') AS d").get().d;
