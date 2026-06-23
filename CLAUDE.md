@@ -2,7 +2,9 @@
 
 Sistema web de cadastro de tutores e agendamento automatico de castracao animal gratuita para moradores/municipes de Nova Iguacu.
 
-Este arquivo documenta o estado atual do projeto, regras de negocio, rotas principais e cuidados de deploy.
+Este arquivo documenta o estado atual do projeto, regras de negocio, rotas principais, cuidados de deploy e orientacoes para futuras alteracoes.
+
+Ultima atualizacao: 2026-06-23.
 
 ---
 
@@ -15,7 +17,7 @@ Este arquivo documenta o estado atual do projeto, regras de negocio, rotas princ
 | Banco | SQLite em `data/castracao.sqlite` com WAL mode |
 | Auth | JWT + bcrypt |
 | E-mail | nodemailer, opcional via SMTP |
-| Upload | Multer ainda existe no backend, mas a UI de documentos foi removida |
+| Upload | Multer ainda existe no backend para documentos legados |
 | Icones | Lucide React |
 | CEP | BrasilAPI via backend: `https://brasilapi.com.br/api/cep/v1/{cep}` |
 
@@ -66,7 +68,35 @@ dist/               Build Vite, gerado localmente/producao
 
 ---
 
+## Alteracoes Recentes Desta Versao
+
+- Area de Clinica: adicionados filtros por status, mes e nome do tutor.
+- Area de Clinica para admin: continua permitindo ver todas as clinicas ou filtrar por uma clinica especifica.
+- Area de Vagas/Agendamento admin: o botao `Renovar Vagas` agora abre uma tela de renovacao das vagas selecionadas.
+- Renovacao de vagas: cada vaga selecionada permite editar nova data, novo horario, tipo, clinica e total de vagas antes de salvar.
+- Datas: padrao visual `DD/MM/AAAA` no frontend e exports CSV/PDF; o banco continua armazenando `YYYY-MM-DD`.
+- Horarios: campos de horario usam padrao 24 horas `HH:MM`, evitando exibicao AM/PM.
+- Disponibilidade publica: tutor, protetor e admin so visualizam/selecionam vagas com pelo menos 8 horas de antecedencia.
+- Disponibilidade por mes: uma vaga so fica visivel ao publico a partir de 5 dias antes do inicio do mes da propria vaga.
+- API: rotas `/api` desconhecidas retornam JSON de erro antes do fallback da SPA, evitando resposta HTML em chamadas do frontend.
+- Auditoria: removidos import/funcao sem uso (`Plus` no frontend e `bookingTargetMonth` no banco).
+
+---
+
 ## Banco de Dados
+
+### Orientacao Sobre as Ultimas Mudancas
+
+As mudancas recentes de filtros, renovacao de vagas, datas em `DD/MM/AAAA`, horarios em 24h, regra de 8 horas e janela de 5 dias nao exigiram nova tabela, nova coluna nem migracao manual.
+
+O banco continua usando:
+
+- Datas armazenadas como texto ISO `YYYY-MM-DD`.
+- Horarios armazenados como texto `HH:MM`.
+- Quantidade de vagas em `slots.total_quantity` e ocupacao em `slots.occupied_quantity`.
+- Status do agendamento em `appointments.status`.
+
+Ao fazer deploy desta versao, basta subir o codigo e reiniciar a aplicacao. O restart continua executando `initSchema()` e as migracoes automaticas ja existentes em `server/db.js`.
 
 ### Tabela `users`
 
@@ -84,19 +114,83 @@ Campos relevantes:
 | `email` | Opcional |
 | `doc_residencia`, `doc_cpf`, `doc_identidade` | Legado de upload de documentos |
 
-### Outras tabelas
+### Tabela `slots`
+
+Representa as vagas cadastradas pela administracao.
+
+| Campo | Uso |
+|-------|-----|
+| `date` | Data da vaga em `YYYY-MM-DD` |
+| `time` | Horario da vaga em `HH:MM` |
+| `species` | `cao` ou `gato` |
+| `sex` | `macho` ou `femea` |
+| `total_quantity` | Total de vagas daquele lote |
+| `occupied_quantity` | Quantidade ja ocupada |
+| `clinic_id` | Clinica vinculada |
+| `clinic` | Texto legado com nome da clinica |
+| `active` | Se a vaga esta ativa |
+
+### Tabela `appointments`
+
+Campos importantes:
+
+| Campo | Uso |
+|-------|-----|
+| `status` | `agendado`, `realizado`, `nao_realizado`, `cancelado` |
+| `microchip` | Obrigatorio ao confirmar como `realizado` |
+| `substitute_responsible` | Marca responsavel substituto |
+| `responsible_*` | Dados do responsavel substituto |
+
+Outras tabelas:
 
 - `clinics`: clinicas cadastradas, endereco, bairro, telefone, active.
-- `slots`: vagas por data, hora, especie, sexo, clinica e quantidade.
 - `animals`: animais do usuario.
-- `appointments`: agendamentos, status, protocolo, aceite dos termos e `microchip TEXT` (preenchido ao confirmar como realizado).
 - `settings`: chaves internas de seed/importacao.
+
+### Migracoes Automaticas Existentes
+
+`server/db.js` usa `ensureColumn()` na inicializacao para manter compatibilidade com bancos antigos.
+
+Colunas automaticas em `users`:
+
+- `clinic_id INTEGER REFERENCES clinics(id)`
+- `cep TEXT`
+- `address_number TEXT`
+- `doc_residencia TEXT`
+- `doc_cpf TEXT`
+- `doc_identidade TEXT`
+- `email TEXT`
+
+Colunas automaticas em `appointments`:
+
+- `microchip TEXT`
+- `substitute_responsible INTEGER NOT NULL DEFAULT 0`
+- `responsible_name TEXT`
+- `responsible_cpf TEXT`
+- `responsible_cep TEXT`
+- `responsible_address TEXT`
+- `responsible_address_number TEXT`
+- `responsible_neighborhood TEXT`
+- `responsible_phone TEXT`
+- `responsible_email TEXT`
+- `responsible_city_confirmed INTEGER NOT NULL DEFAULT 0`
+- `responsible_adult_confirmed INTEGER NOT NULL DEFAULT 0`
+
+Indice automatico:
+
+- `idx_appointments_microchip`, unico para `appointments.microchip` quando nao nulo.
+
+Coluna automatica em `slots`:
+
+- `clinic_id INTEGER REFERENCES clinics(id)`
+
+Tambem existe `migrateSlotClinics()`, que tenta preencher `slots.clinic_id` em vagas antigas usando o texto legado `slots.clinic`.
 
 ---
 
 ## Regras de Negocio Atuais
 
-### Cadastro publico
+### Cadastro Publico
 
 - O botao `Cadastrar-se` abre apenas o cadastro do cidadao/tutor.
 - O cadastro publico tem 2 etapas:
@@ -105,7 +199,7 @@ Campos relevantes:
 - Ao aceitar os termos, o usuario e criado como `tutor`, fica logado automaticamente e vai para a area do tutor.
 - O agendamento do animal e feito depois, dentro da area logada.
 
-### Campos do cadastro
+### Campos do Cadastro
 
 Campos obrigatorios do tutor:
 
@@ -129,7 +223,7 @@ Quando o usuario informa 8 digitos no CEP:
 - O backend bloqueia CEP que nao seja do municipio de Nova Iguacu/RJ.
 - A validacao no backend tambem acontece no `POST /api/auth/register`.
 
-### Sem numero
+### Sem Numero
 
 - A opcao `Sem numero` desabilita o campo de numero.
 - O backend salva `address_number = 'S/N'`.
@@ -152,9 +246,37 @@ Limites:
 - Protetor Cadastrado: ate 4 agendamentos por mes.
 - Admin: ilimitado.
 
-O limite mensal e calculado pelo mes do slot escolhido, usando `getMonthlyUsage`.
+O limite mensal e calculado pelo mes do slot escolhido, usando `getMonthlyUsage()`.
 
-### Clinicas no agendamento
+### Regra de Disponibilidade das Vagas
+
+Tutor, protetor e admin so podem visualizar e selecionar vagas que cumpram todas as regras abaixo:
+
+- Vaga ativa.
+- Clinica ativa.
+- Vaga com capacidade disponivel.
+- Data da vaga maior ou igual a data atual local.
+- Data/hora da vaga pelo menos 8 horas depois do momento atual local.
+- Vaga liberada pela janela mensal: a data atual precisa ser igual ou posterior a 5 dias antes do primeiro dia do mes da vaga.
+
+Exemplo:
+
+- Vaga em `28/05/2026 11:00`.
+- Ela so aparece se o momento atual for ate no maximo `28/05/2026 03:00` ou antes, respeitando o intervalo minimo de 8 horas.
+- Se faltar menos de 8 horas, a vaga fica oculta e tambem nao pode ser reservada pela API.
+
+Essa regra e aplicada nos endpoints:
+
+- `GET /api/clinics/available?species=&sex=`
+- `GET /api/clinics/:clinicId/available-dates?species=&sex=`
+- `GET /api/availability`
+- `POST /api/appointments/auto`
+
+A revalidacao dentro de `POST /api/appointments/auto` e obrigatoria, porque impede reserva de vaga que ficou indisponivel entre a exibicao no frontend e a confirmacao.
+
+Importante: a tela admin de vagas lista vagas administrativas e nao deve ocultar vagas futuras pela regra publica. Admin precisa conseguir criar, editar, renovar e excluir vagas antes de elas ficarem visiveis ao publico.
+
+### Clinicas no Agendamento
 
 Endpoint: `GET /api/clinics/available?species=&sex=`
 
@@ -167,34 +289,100 @@ Comportamento atual:
 - Clinicas sem vaga aparecem na lista, mas desabilitadas.
 - O texto exibido e `Sem vagas disponiveis no momento`.
 - Depois de escolher a clinica, o usuario escolhe uma data disponivel para a unidade.
-- Datas lotadas nao aparecem na etapa de data.
+- Datas lotadas, fora da janela mensal ou com menos de 8 horas de antecedencia nao aparecem.
 - O usuario escolhe a clinica e a data, mas nao escolhe horario.
-- O backend revalida clinica ativa, data, especie, sexo e capacidade no momento da confirmacao.
-- O sistema reserva automaticamente o primeiro horario compativel disponivel na data escolhida.
+- O backend reserva automaticamente o primeiro horario compativel disponivel na data escolhida.
 
-### Area de clinica
+### Area de Clinica
 
 - Usuario `clinica`: ve somente agendamentos da clinica vinculada em `clinic_id`.
 - Usuario `admin`: tambem pode acessar o ambiente de Clinica.
-- Para admin, a tela exibe um seletor de clinica.
+- Para admin, a tela exibe seletor de clinica.
 - Admin pode ver todas as clinicas ou filtrar uma clinica especifica.
-- O filtro usa `/api/admin/appointments?clinicId=ID`.
+- O filtro de clinica usa `/api/admin/appointments?clinicId=ID`.
+- Alem da clinica, a tela permite filtrar os agendamentos por:
+  - Status: todos, agendado, realizado, nao realizado, cancelado.
+  - Mes da data do agendamento.
+  - Nome do tutor.
+- Status, mes e tutor sao filtros aplicados no frontend sobre a lista carregada.
+- O botao de limpar filtros volta a exibicao para todos os resultados permitidos pelo perfil.
 
-### Troca de senha (protetor e clinica)
+### Area Admin - Vagas
 
-- Endpoint `PUT /api/me/password` — restrito a roles `protetor` e `clinica`.
-- Exige senha atual (validada com bcrypt) e nova senha com minimo de 6 caracteres.
-- Disponivel como formulario colapsavel ("Alterar senha") no painel do protetor e no painel da clinica.
-- Admin nao ve esse formulario — usa o painel admin para alterar senhas de qualquer usuario.
+A aba `Vagas` permite:
 
-### Microchip obrigatorio ao confirmar castracao
+- Criar vaga.
+- Editar vaga.
+- Desativar vaga.
+- Excluir definitivamente quando permitido.
+- Selecionar varias vagas.
+- Filtrar por clinica, data, tipo e status.
+- Paginar a lista.
+
+Datas nos formularios aparecem como `DD/MM/AAAA`.
+
+Horarios nos formularios aparecem como `HH:MM` em formato 24 horas.
+
+### Renovar Vagas Selecionadas
+
+Na aba `Vagas`, ao selecionar uma ou mais vagas e clicar em `Renovar Vagas`, o sistema abre uma nova tela de renovacao.
+
+Nessa tela, para cada vaga selecionada, o admin define:
+
+- Nova data.
+- Novo horario.
+- Tipo da vaga, combinando especie e sexo.
+- Clinica.
+- Total de vagas.
+
+Ao salvar, o frontend envia `renewals` para:
+
+```text
+POST /api/admin/slots/renew
+```
+
+O backend cria novas vagas em `slots` com `occupied_quantity = 0`, mantendo as vagas originais intactas.
+
+Compatibilidade: o backend ainda aceita o formato antigo com apenas `ids`. Nesse caso, ele clona a vaga para `date + 1 month`, mantendo horario, tipo, clinica e quantidade original.
+
+### Renovacao Automatica Mensal
+
+Endpoint:
+
+```text
+POST /api/admin/slots/auto-renew
+```
+
+Helper:
+
+```text
+autoRenewSlots()
+```
+
+Comportamento:
+
+- So executa a partir do dia 25 do mes.
+- Clona vagas ativas do mes atual para o mes seguinte.
+- Mantem data equivalente, horario, tipo, clinica e total.
+- Cria vagas com `occupied_quantity = 0`.
+- E idempotente: nao duplica vaga que ja existe com os mesmos dados.
+- Tambem e chamado no bootstrap do servidor uma vez por dia.
+
+### Troca de Senha (Protetor e Clinica)
+
+- Endpoint `PUT /api/me/password`, restrito a roles `protetor` e `clinica`.
+- Exige senha atual validada com bcrypt e nova senha com minimo de 6 caracteres.
+- Disponivel como formulario colapsavel no painel do protetor e no painel da clinica.
+- Admin nao ve esse formulario; usa o painel admin para alterar senhas de qualquer usuario.
+
+### Microchip Obrigatorio ao Confirmar Castracao
 
 - Ao mudar status para `realizado`, o campo `microchip` e obrigatorio.
-- Formato: 16 digitos — 15 digitos do numero principal + 1 digito verificador.
-- O backend valida formato e unicidade antes do UPDATE (indice unico `idx_appointments_microchip`).
+- Formato: 16 digitos, sendo 15 digitos do numero principal + 1 digito verificador.
+- O backend valida formato e unicidade antes do `UPDATE`.
 - Duplicata retorna erro 409 com mensagem identificando o agendamento conflitante.
 - O microchip e exibido na tabela de agendamentos da clinica/admin.
-- O microchip aparece no relatorio de castracoes (PDF e CSV) na secao "Detalhe das castracoes realizadas".
+- O microchip aparece no relatorio de castracoes PDF e CSV.
 
 ### Protetor Cadastrado
 
@@ -211,8 +399,8 @@ Comportamento atual:
 | Metodo | Rota | Descricao |
 |--------|------|-----------|
 | GET | `/api/health` | Health check |
-| GET | `/api/availability` | Vagas agrupadas |
-| GET | `/api/clinics/available?species=&sex=` | Todas as clinicas ativas com contador de vagas |
+| GET | `/api/availability` | Vagas agrupadas, respeitando janela de 5 dias e minimo de 8 horas |
+| GET | `/api/clinics/available?species=&sex=` | Todas as clinicas ativas com contador de vagas publicamente disponiveis |
 | GET | `/api/clinics/:clinicId/available-dates?species=&sex=` | Datas disponiveis por clinica ativa e tipo de animal |
 | GET | `/api/public/cpf-status?cpf=` | Verifica CPF ja cadastrado |
 | GET | `/api/public/cep/:cep` | Consulta CEP e valida Nova Iguacu via BrasilAPI |
@@ -224,7 +412,7 @@ Comportamento atual:
 | Metodo | Rota | Descricao |
 |--------|------|-----------|
 | GET | `/api/me` | Usuario logado, limite mensal e agendamentos |
-| PUT | `/api/me/password` | Troca de senha propria (protetor e clinica apenas) |
+| PUT | `/api/me/password` | Troca de senha propria, apenas protetor e clinica |
 | POST | `/api/appointments/auto` | Novo agendamento para tutor/protetor/admin |
 | POST | `/api/appointments/:id/cancel` | Cancelar agendamento proprio ou admin |
 
@@ -234,17 +422,28 @@ Comportamento atual:
 |--------|------|-----------|
 | GET | `/api/admin/appointments` | Admin ve todos; clinica ve apenas a vinculada |
 | GET | `/api/admin/appointments?clinicId=ID` | Admin filtra por clinica |
-| PATCH | `/api/admin/appointments/:id/status` | Atualiza status; status `realizado` exige campo `microchip` (16 digitos) |
+| PATCH | `/api/admin/appointments/:id/status` | Atualiza status; status `realizado` exige `microchip` |
 | GET/POST | `/api/admin/clinics` | Listar/criar clinicas |
 | PUT/DELETE | `/api/admin/clinics/:id` | Editar/desativar/excluir clinica |
 | GET/POST | `/api/admin/slots` | Listar/criar vagas |
 | PUT/DELETE | `/api/admin/slots/:id` | Editar/desativar/excluir vaga |
-| POST | `/api/admin/slots/renew` | Renovar vagas selecionadas |
+| POST | `/api/admin/slots/renew` | Renovar vagas selecionadas com novos dados |
+| POST | `/api/admin/slots/auto-renew` | Renovacao automatica mensal |
 | GET/POST/PUT | `/api/admin/users` | CRUD usuarios |
 | POST | `/api/admin/users/import` | Importar Excel/CSV de protetores |
 | GET | `/api/admin/protectors` | Listar protetores |
 | GET | `/api/admin/summary` | Metricas |
 | GET | `/api/admin/reports` | Relatorios |
+
+### Fallback da API
+
+Qualquer rota iniciada com `/api` que nao exista retorna JSON:
+
+```json
+{ "message": "Rota de API nao encontrada: ..." }
+```
+
+Esse fallback deve ficar antes do `express.static(distDir)` para evitar que o frontend receba HTML quando espera JSON.
 
 ---
 
@@ -257,17 +456,17 @@ Comportamento atual:
 - Avisos reforcam que o servico gratuito e somente para moradores/municipes de Nova Iguacu.
 - Botao de WhatsApp para `Torne-se um Protetor Cadastrado`.
 
-### Fluxo deslogado
+### Fluxo Deslogado
 
 `Cadastrar-se` mostra apenas cadastro do tutor e termos.
 
 Depois do cadastro:
 
-- Salva token/user no localStorage.
+- Salva token/user no `localStorage`.
 - Redireciona para area do tutor.
 - Usuario agenda o animal dentro da area logada.
 
-### Fluxo logado
+### Fluxo Logado
 
 Ao clicar em agendar:
 
@@ -278,13 +477,36 @@ Ao clicar em agendar:
 5. Escolhe data disponivel.
 6. Confirma agendamento.
 
-### Dashboard do tutor/protetor/admin
+Na etapa de data, o frontend busca datas por clinica e tipo de animal via `/api/clinics/:clinicId/available-dates`.
+
+### Datas e Horarios
+
+- Exibir datas como `DD/MM/AAAA`.
+- Aceitar digitacao de datas em `DD/MM/AAAA`.
+- Converter para ISO `YYYY-MM-DD` antes de enviar ao backend.
+- O backend tambem aceita `DD/MM/AAAA` em `normalizeDateInput()`.
+- Exibir horarios como `HH:MM`, formato 24 horas.
+- Evitar inputs nativos que exibam AM/PM no navegador.
+
+### Dashboard do Tutor/Protetor/Admin
 
 - Mostra limite mensal.
 - Mostra usados no mes.
 - Admin aparece com limite `Ilimitado`.
 - Botao `Agendar castracao do animal`.
-- Protetor e clinica: formulario colapsavel "Alterar senha" disponivel no dashboard.
+- Protetor e clinica: formulario colapsavel de alteracao de senha.
+
+### Requisicoes da API
+
+O helper `request()` em `src/App.jsx` espera JSON nas respostas de API.
+
+Se a resposta nao for JSON, exibe:
+
+```text
+Resposta invalida da API. Reinicie o servidor e tente novamente.
+```
+
+Isso normalmente indica servidor errado, servidor parado, proxy mal configurado ou fallback da SPA respondendo uma chamada `/api`.
 
 ---
 
@@ -313,13 +535,13 @@ Demais regras mantidas:
 - Informar medicamentos ao veterinario.
 - Vacinados ha menos de 21 dias nao podem ser castrados.
 - Residencia obrigatoria em Nova Iguacu.
-- Levar **copias** de identidade, CPF e comprovante de residencia de Nova Iguacu no dia.
+- Levar copias de identidade, CPF e comprovante de residencia de Nova Iguacu no dia.
 
 ---
 
 ## Deploy em Producao
 
-### Importante: nao subir o banco para o Git
+### Importante: Nao Subir o Banco para o Git
 
 Nao versionar nem enviar:
 
@@ -333,7 +555,7 @@ O diretorio `data/` ja esta no `.gitignore`. Nunca usar `git add -f data/`.
 
 O banco de producao deve permanecer no servidor de producao. O deploy deve subir apenas codigo.
 
-### Passos normais
+### Passos Normais
 
 ```bash
 git pull
@@ -344,58 +566,44 @@ pm2 restart all
 
 Se o deploy usar `DB_PATH`, confirme que a variavel aponta para o banco correto antes de reiniciar.
 
-### Migracao do banco em producao
+### Backup Antes de Deploy com Mudanca de Banco
 
-As mudancas recentes adicionaram colunas via `ensureColumn` em `server/db.js`:
-
-Em `users`:
-- `cep TEXT`
-- `address_number TEXT`
-
-Em `appointments`:
-- `microchip TEXT` — indice unico `idx_appointments_microchip` criado automaticamente
-- `substitute_responsible INTEGER NOT NULL DEFAULT 0` — flag para responsável substituto
-- `responsible_name TEXT` — nome do responsável substituto
-- `responsible_cpf TEXT` — CPF do responsável substituto
-- `responsible_cep TEXT` — CEP do responsável substituto
-- `responsible_address TEXT` — endereço do responsável substituto
-- `responsible_address_number TEXT` — número da residência (ou 'S/N')
-- `responsible_neighborhood TEXT` — bairro do responsável substituto
-- `responsible_phone TEXT` — telefone do responsável substituto
-- `responsible_email TEXT` — e-mail do responsável substituto (opcional)
-- `responsible_city_confirmed INTEGER NOT NULL DEFAULT 0` — confirmação de residência em Nova Iguaçu
-- `responsible_adult_confirmed INTEGER NOT NULL DEFAULT 0` — confirmação de maioridade
-
-O arquivo `server/db.js` chama `ensureColumn` e `CREATE UNIQUE INDEX IF NOT EXISTS` na inicializacao, entao o restart da aplicacao cria tudo automaticamente.
-
-Mesmo assim, em producao faca backup antes:
+Mesmo que a versao atual nao exija migracao nova, mantenha o procedimento de backup quando houver alteracao de schema:
 
 ```bash
 cp data/castracao.sqlite data/castracao.sqlite.bak-$(date +%F-%H%M)
 ```
 
-Verifique se as colunas existem:
+Se usar `DB_PATH`:
+
+```bash
+cp "$DB_PATH" "$DB_PATH.bak-$(date +%F-%H%M)"
+```
+
+### Verificar Colunas
 
 ```bash
 sqlite3 data/castracao.sqlite "PRAGMA table_info(users);"
+sqlite3 data/castracao.sqlite "PRAGMA table_info(appointments);"
+sqlite3 data/castracao.sqlite "PRAGMA table_info(slots);"
 ```
 
 Se usar `DB_PATH`:
 
 ```bash
 sqlite3 "$DB_PATH" "PRAGMA table_info(users);"
+sqlite3 "$DB_PATH" "PRAGMA table_info(appointments);"
+sqlite3 "$DB_PATH" "PRAGMA table_info(slots);"
 ```
 
-Se por algum motivo a migracao automatica nao executar, rode uma migracao segura via Node na raiz do projeto:
+### Migracao Manual Somente em Emergencia
+
+Preferir sempre deixar `initSchema()` rodar no restart. Se a migracao automatica nao executar, usar scripts Node pontuais e idempotentes, verificando antes se a coluna ja existe.
+
+Exemplo para validar colunas principais:
 
 ```bash
-node --input-type=module -e "import { db } from './server/db.js'; const cols = db.prepare('PRAGMA table_info(users)').all().map(c => c.name); if (!cols.includes('cep')) db.exec('ALTER TABLE users ADD COLUMN cep TEXT'); if (!cols.includes('address_number')) db.exec('ALTER TABLE users ADD COLUMN address_number TEXT'); console.log('users ok:', db.prepare('PRAGMA table_info(users)').all().map(c => c.name).filter(c => ['cep','address_number'].includes(c)).join(','));"
-```
-
-Para as colunas de responsável substituto em `appointments`, rode:
-
-```bash
-node --input-type=module -e "import { db } from './server/db.js'; const cols = db.prepare('PRAGMA table_info(appointments)').all().map(c => c.name); const needed = ['substitute_responsible', 'responsible_name', 'responsible_cpf', 'responsible_cep', 'responsible_address', 'responsible_address_number', 'responsible_neighborhood', 'responsible_phone', 'responsible_email', 'responsible_city_confirmed', 'responsible_adult_confirmed']; const missing = needed.filter(n => !cols.includes(n)); if (missing.length > 0) { missing.forEach(col => { const type = (col === 'substitute_responsible' || col.includes('confirmed')) ? 'INTEGER NOT NULL DEFAULT 0' : 'TEXT'; db.exec(\`ALTER TABLE appointments ADD COLUMN \${col} \${type}\`); }); db.exec('CREATE UNIQUE INDEX IF NOT EXISTS idx_appointments_microchip ON appointments(microchip) WHERE microchip IS NOT NULL'); console.log('✓ Migração concluída. Colunas adicionadas:', missing.join(', ')); } else { console.log('✓ Todas as colunas já existem'); }"
+node --input-type=module -e "import { db } from './server/db.js'; for (const table of ['users','appointments','slots']) console.log(table, db.prepare('PRAGMA table_info(' + table + ')').all().map(c => c.name).join(','));"
 ```
 
 Depois reinicie:
@@ -404,7 +612,7 @@ Depois reinicie:
 pm2 restart all
 ```
 
-### BrasilAPI em producao
+### BrasilAPI em Producao
 
 O servidor precisa conseguir acessar:
 
@@ -453,9 +661,12 @@ Em producao, configurar `ADMIN_CPF` e `ADMIN_PASSWORD`.
 ## Observacoes Tecnicas
 
 - Usa `node:sqlite`, disponivel em Node 22+.
-- `createAutomaticAppointment` usa `BEGIN IMMEDIATE` para reduzir corrida na reserva de vaga.
+- `createAutomaticAppointment()` usa `BEGIN IMMEDIATE` para reduzir corrida na reserva de vaga.
 - Cancelamento decrementa `slots.occupied_quantity`.
 - Reativacao de cancelado incrementa novamente a vaga, respeitando capacidade salvo override de admin.
 - `slots.clinic` e texto legado; `slots.clinic_id` e a FK atual.
 - `migrateSlotClinics()` preenche `clinic_id` para slots antigos quando possivel.
-- Upload de documentos ainda existe no backend por compatibilidade, mas a UI orienta levar documentos fisicos.
+- `bookingTargetMonth()` foi removida porque a regra antiga de mes alvo foi substituida pela janela de visibilidade de 5 dias antes do inicio do mes da vaga.
+- Upload de documentos ainda existe no backend por compatibilidade, mas o fluxo principal orienta levar documentos fisicos.
+- Ao alterar regras de disponibilidade, atualizar sempre os quatro pontos: `/api/clinics/available`, `/api/clinics/:clinicId/available-dates`, `/api/availability` e `createAutomaticAppointment()`.
+- Ao alterar formato de data/hora, manter conversao entre frontend (`DD/MM/AAAA`, `HH:MM`) e banco (`YYYY-MM-DD`, `HH:MM`).
