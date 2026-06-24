@@ -400,6 +400,8 @@ function Wizard({ auth, onDone }) {
   const responsibleCepError = responsibleCepLookup.error || (validationAttempted && step === 1 && responsible.enabled && responsibleCepDigits.length !== 8 ? 'Informe um CEP válido com 8 dígitos para o responsável substituto.' : '');
   const showStepOneFieldErrors = validationAttempted && step === 1 && isRegistrationFlow;
   const showResponsibleFieldErrors = validationAttempted && step === 1 && !isRegistrationFlow && responsible.enabled;
+  const selectedDateInfo = availableDates.find((item) => item.date === selectedDate);
+  const selectedDateTime = selectedDateInfo?.first_time || '';
 
   useEffect(() => {
     if (!isRegistrationFlow) return;
@@ -985,6 +987,7 @@ function Wizard({ auth, onDone }) {
                     <span>Raça e idade</span><strong>{animal.breed} · {animal.approximateAge}</strong>
                     <span>Clínica</span><strong>{clinics.find((c) => c.id === selectedClinicId)?.name || '—'}</strong>
                     <span>Data</span><strong>{formatDate(selectedDate)}</strong>
+                    <span>Horário</span><strong>{selectedDateTime || 'Primeiro horário disponível'}</strong>
                     <span>Responsável no atendimento</span><strong>{responsible.enabled ? responsible.name : auth?.user?.name}</strong>
                     {responsible.enabled ? (
                       <>
