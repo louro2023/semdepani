@@ -120,18 +120,17 @@ app.get('/api/health', (_req, res) => {
   res.json({ ok: true, name: 'Castração Animal Nova Iguaçu' });
 });
 
-app.get('/api/clinics/available', (req, res) => {
+app.get('/api/clinics/available', optionalAuth, (req, res) => {
   const { species, sex } = req.query;
   if (!species || !sex) return res.status(400).json({ message: 'species e sex são obrigatórios.' });
+  const dateGuard = slotAvailabilityDateGuard(req.user, 's');
   const clinics = db.prepare(`
     SELECT c.id, c.name, c.address, c.neighborhood,
       COALESCE(SUM(s.total_quantity - s.occupied_quantity), 0) AS available_slots
     FROM clinics c
     LEFT JOIN slots s ON s.clinic_id = c.id
       AND s.active = 1
-      AND s.date >= date('now', 'localtime')
-      AND date('now', 'localtime') >= date(s.date, 'start of month', '-5 days')
-      AND datetime(s.date || ' ' || s.time) >= datetime('now', 'localtime', '+8 hours')
+      ${dateGuard}
       AND s.species = ?
       AND s.sex = ?
       AND s.occupied_quantity < s.total_quantity
@@ -142,13 +141,15 @@ app.get('/api/clinics/available', (req, res) => {
   res.json({ clinics });
 });
 
-app.get('/api/clinics/:clinicId/available-dates', (req, res) => {
+app.get('/api/clinics/:clinicId/available-dates', optionalAuth, (req, res) => {
   try {
     const { species, sex } = req.query;
     const clinicId = Number(req.params.clinicId);
     if (!Number.isInteger(clinicId) || clinicId <= 0) throw httpError(400, 'Clinica invalida.');
     if (!['cao', 'gato'].includes(species)) throw httpError(400, 'Selecione a especie.');
     if (!['macho', 'femea'].includes(sex)) throw httpError(400, 'Selecione o sexo.');
+
+    const dateGuard = slotAvailabilityDateGuard(req.user, 's');
 
     const dates = db.prepare(`
       SELECT
@@ -160,9 +161,7 @@ app.get('/api/clinics/:clinicId/available-dates', (req, res) => {
       WHERE c.id = ?
         AND c.active = 1
         AND s.active = 1
-        AND s.date >= date('now', 'localtime')
-        AND date('now', 'localtime') >= date(s.date, 'start of month', '-5 days')
-        AND datetime(s.date || ' ' || s.time) >= datetime('now', 'localtime', '+8 hours')
+        ${dateGuard}
         AND s.species = ?
         AND s.sex = ?
         AND s.occupied_quantity < s.total_quantity
@@ -180,14 +179,13 @@ app.get('/api/clinics/:clinicId/available-dates', (req, res) => {
   }
 });
 
-app.get('/api/availability', (_req, res) => {
+app.get('/api/availability', optionalAuth, (req, res) => {
+  const dateGuard = slotAvailabilityDateGuard(req.user);
   const rows = db.prepare(`
     SELECT species, sex, SUM(total_quantity) AS total, SUM(occupied_quantity) AS occupied
     FROM slots
     WHERE active = 1
-      AND date >= date('now', 'localtime')
-      AND date('now', 'localtime') >= date(date, 'start of month', '-5 days')
-      AND datetime(date || ' ' || time) >= datetime('now', 'localtime', '+8 hours')
+      ${dateGuard}
     GROUP BY species, sex
     ORDER BY species, sex
   `).all();
@@ -1180,6 +1178,8 @@ async function createAutomaticAppointment(user, animalInput, terms, options = {}
   if (!/^\d{4}-\d{2}-\d{2}$/.test(requestedDate)) throw httpError(400, 'Selecione uma data disponivel para continuar.');
 
   const limit = getAppointmentLimit(user.role);
+  const slotDateGuard = slotAvailabilityDateGuard(user, 's');
+  const updateDateGuard = slotAvailabilityDateGuard(user);
   let appointmentId;
 
   db.exec('BEGIN IMMEDIATE');
@@ -1195,9 +1195,7 @@ async function createAutomaticAppointment(user, animalInput, terms, options = {}
       WHERE c.active = 1
         AND s.active = 1
         AND s.date = ?
-        AND s.date >= date('now', 'localtime')
-        AND date('now', 'localtime') >= date(s.date, 'start of month', '-5 days')
-        AND datetime(s.date || ' ' || s.time) >= datetime('now', 'localtime', '+8 hours')
+        ${slotDateGuard}
         AND s.species = ? AND s.sex = ?
         AND s.occupied_quantity < s.total_quantity
         AND s.clinic_id = ?
@@ -1219,9 +1217,7 @@ async function createAutomaticAppointment(user, animalInput, terms, options = {}
       SET occupied_quantity = occupied_quantity + 1, updated_at = CURRENT_TIMESTAMP
       WHERE id = ?
         AND active = 1
-        AND date >= date('now', 'localtime')
-        AND date('now', 'localtime') >= date(date, 'start of month', '-5 days')
-        AND datetime(date || ' ' || time) >= datetime('now', 'localtime', '+8 hours')
+        ${updateDateGuard}
         AND occupied_quantity < total_quantity
         AND EXISTS (
           SELECT 1 FROM clinics c
@@ -1499,6 +1495,36 @@ function getClinic(id) {
     FROM clinics
     WHERE id = ?
   `).get(id);
+}
+
+function optionalAuth(req, _res, next) {
+  const token = String(req.headers.authorization || '').replace(/^Bearer\s+/i, '');
+  if (!token) {
+    next();
+    return;
+  }
+  try {
+    const payload = jwt.verify(token, JWT_SECRET);
+    const user = getUserById(payload.id);
+    if (user?.active) req.user = user;
+  } catch (_error) {
+    // Public availability endpoints still work without an authenticated profile.
+  }
+  next();
+}
+
+function slotAvailabilityDateGuard(user, alias = '') {
+  const prefix = alias ? `${alias}.` : '';
+  const dateField = `${prefix}date`;
+  const timeField = `${prefix}time`;
+  if (user?.role === 'admin') {
+    return `AND ${dateField} >= date('now', 'localtime')`;
+  }
+  return `
+        AND ${dateField} >= date('now', 'localtime')
+        AND date('now', 'localtime') >= date(${dateField}, 'start of month', '-5 days')
+        AND datetime(${dateField} || ' ' || ${timeField}) >= datetime('now', 'localtime', '+8 hours')
+      `;
 }
 
 function requireAuth(req, res, next) {

@@ -4,7 +4,7 @@ Sistema web de cadastro de tutores e agendamento automatico de castracao animal 
 
 Este arquivo documenta o estado atual do projeto, regras de negocio, rotas principais, cuidados de deploy e orientacoes para futuras alteracoes.
 
-Ultima atualizacao: 2026-06-23.
+Ultima atualizacao: 2026-06-24.
 
 ---
 
@@ -76,7 +76,8 @@ dist/               Build Vite, gerado localmente/producao
 - Renovacao de vagas: cada vaga selecionada permite editar nova data, novo horario, tipo, clinica e total de vagas antes de salvar.
 - Datas: padrao visual `DD/MM/AAAA` no frontend e exports CSV/PDF; o banco continua armazenando `YYYY-MM-DD`.
 - Horarios: campos de horario usam padrao 24 horas `HH:MM`, evitando exibicao AM/PM.
-- Disponibilidade publica: tutor, protetor e admin so visualizam/selecionam vagas com pelo menos 8 horas de antecedencia.
+- Disponibilidade publica: tutor e protetor so visualizam/selecionam vagas com pelo menos 8 horas de antecedencia.
+- Disponibilidade para admin: admin logado pode agendar vagas futuras ja lancadas no sistema, mesmo fora da janela publica de 5 dias e sem a trava de 8 horas.
 - Disponibilidade por mes: uma vaga so fica visivel ao publico a partir de 5 dias antes do inicio do mes da propria vaga.
 - API: rotas `/api` desconhecidas retornam JSON de erro antes do fallback da SPA, evitando resposta HTML em chamadas do frontend.
 - Auditoria: removidos import/funcao sem uso (`Plus` no frontend e `bookingTargetMonth` no banco).
@@ -250,7 +251,7 @@ O limite mensal e calculado pelo mes do slot escolhido, usando `getMonthlyUsage(
 
 ### Regra de Disponibilidade das Vagas
 
-Tutor, protetor e admin so podem visualizar e selecionar vagas que cumpram todas as regras abaixo:
+Tutor e protetor so podem visualizar e selecionar vagas que cumpram todas as regras abaixo:
 
 - Vaga ativa.
 - Clinica ativa.
@@ -265,7 +266,14 @@ Exemplo:
 - Ela so aparece se o momento atual for ate no maximo `28/05/2026 03:00` ou antes, respeitando o intervalo minimo de 8 horas.
 - Se faltar menos de 8 horas, a vaga fica oculta e tambem nao pode ser reservada pela API.
 
-Essa regra e aplicada nos endpoints:
+Para administrador logado:
+
+- Pode visualizar e selecionar vagas futuras ja cadastradas no sistema, inclusive vagas para meses futuros, como 60 dias adiante.
+- Nao segue a janela publica de 5 dias antes do inicio do mes.
+- Nao segue a trava publica de 8 horas de antecedencia.
+- Continua exigindo vaga ativa, clinica ativa, data de hoje ou futura e capacidade disponivel.
+
+Essa regra por perfil e aplicada nos endpoints:
 
 - `GET /api/clinics/available?species=&sex=`
 - `GET /api/clinics/:clinicId/available-dates?species=&sex=`
@@ -274,7 +282,7 @@ Essa regra e aplicada nos endpoints:
 
 A revalidacao dentro de `POST /api/appointments/auto` e obrigatoria, porque impede reserva de vaga que ficou indisponivel entre a exibicao no frontend e a confirmacao.
 
-Importante: a tela admin de vagas lista vagas administrativas e nao deve ocultar vagas futuras pela regra publica. Admin precisa conseguir criar, editar, renovar e excluir vagas antes de elas ficarem visiveis ao publico.
+Importante: a tela admin de vagas lista vagas administrativas e nao deve ocultar vagas futuras pela regra publica. Admin precisa conseguir criar, editar, renovar, excluir e tambem agendar vagas antes de elas ficarem visiveis ao publico.
 
 ### Clinicas no Agendamento
 
@@ -289,7 +297,8 @@ Comportamento atual:
 - Clinicas sem vaga aparecem na lista, mas desabilitadas.
 - O texto exibido e `Sem vagas disponiveis no momento`.
 - Depois de escolher a clinica, o usuario escolhe uma data disponivel para a unidade.
-- Datas lotadas, fora da janela mensal ou com menos de 8 horas de antecedencia nao aparecem.
+- Para tutor/protetor, datas lotadas, fora da janela mensal ou com menos de 8 horas de antecedencia nao aparecem.
+- Para admin logado, datas futuras com vaga disponivel aparecem mesmo fora da janela mensal e sem a trava de 8 horas.
 - O usuario escolhe a clinica e a data, mas nao escolhe horario.
 - O backend reserva automaticamente o primeiro horario compativel disponivel na data escolhida.
 
@@ -399,9 +408,9 @@ Comportamento:
 | Metodo | Rota | Descricao |
 |--------|------|-----------|
 | GET | `/api/health` | Health check |
-| GET | `/api/availability` | Vagas agrupadas, respeitando janela de 5 dias e minimo de 8 horas |
-| GET | `/api/clinics/available?species=&sex=` | Todas as clinicas ativas com contador de vagas publicamente disponiveis |
-| GET | `/api/clinics/:clinicId/available-dates?species=&sex=` | Datas disponiveis por clinica ativa e tipo de animal |
+| GET | `/api/availability` | Vagas agrupadas; aplica regra publica ou excecao de admin quando houver token de admin |
+| GET | `/api/clinics/available?species=&sex=` | Todas as clinicas ativas com contador de vagas disponiveis para o perfil |
+| GET | `/api/clinics/:clinicId/available-dates?species=&sex=` | Datas disponiveis por clinica ativa, tipo de animal e perfil |
 | GET | `/api/public/cpf-status?cpf=` | Verifica CPF ja cadastrado |
 | GET | `/api/public/cep/:cep` | Consulta CEP e valida Nova Iguacu via BrasilAPI |
 | POST | `/api/auth/login` | Login |

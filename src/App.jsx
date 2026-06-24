@@ -1,4 +1,4 @@
-﻿import { useEffect, useMemo, useState } from 'react';
+﻿import { useEffect, useMemo, useRef, useState } from 'react';
 import {
   AlertCircle,
   BarChart2,
@@ -91,6 +91,7 @@ const MONTH_FILTER_OPTIONS = [
 
 const CPF_DIGITS_LENGTH = 11;
 const PASSWORD_MIN_LENGTH = 6;
+const WEEKDAY_LABELS = ['Dom', 'Seg', 'Ter', 'Qua', 'Qui', 'Sex', 'Sáb'];
 
 function getStoredAuth() {
   try {
@@ -337,6 +338,7 @@ function HomeView({ auth, setView }) {
 
 function Wizard({ auth, onDone }) {
   const isRegistrationFlow = !auth;
+  const isAdminScheduling = auth?.user?.role === 'admin';
   const stepTitles = isRegistrationFlow
     ? ['Dados do cidadão', 'Termos e aceite']
     : ['Usuário logado', 'Termos e regras', 'Dados do animal', 'Escolher clínica', 'Escolher data', 'Confirmação'];
@@ -494,7 +496,7 @@ function Wizard({ auth, onDone }) {
     setAvailableDates([]);
     setSelectedDate('');
     try {
-      const data = await request(`/clinics/available?species=${animal.species}&sex=${animal.sex}`);
+      const data = await request(`/clinics/available?species=${animal.species}&sex=${animal.sex}`, {}, auth?.token);
       const list = data.clinics || [];
       const clinicsWithSlots = list.filter((clinic) => Number(clinic.available_slots || 0) > 0);
       setClinics(list);
@@ -518,7 +520,7 @@ function Wizard({ auth, onDone }) {
     setAvailableDates([]);
     setSelectedDate('');
     try {
-      const data = await request(`/clinics/${clinicId}/available-dates?species=${animal.species}&sex=${animal.sex}`);
+      const data = await request(`/clinics/${clinicId}/available-dates?species=${animal.species}&sex=${animal.sex}`, {}, auth?.token);
       const dates = data.dates || [];
       setAvailableDates(dates);
       if (dates.length === 1) setSelectedDate(dates[0].date);
@@ -893,7 +895,11 @@ function Wizard({ auth, onDone }) {
 
               {step === 4 ? (
                 <div className="wiz-clinic-step">
-                  <p className="wiz-clinic-hint">Escolha a clínica onde deseja ser atendido. Clínicas sem vaga aparecem na lista, mas ficam indisponíveis para seleção neste momento.</p>
+                  <p className="wiz-clinic-hint">
+                    {isAdminScheduling
+                      ? 'Escolha a clínica onde deseja agendar. Administradores visualizam vagas futuras já lançadas no sistema.'
+                      : 'Escolha a clínica onde deseja ser atendido. Clínicas sem vaga aparecem na lista, mas ficam indisponíveis para seleção neste momento.'}
+                  </p>
                   {clinicsLoading ? (
                     <Loading label="Buscando clínicas disponíveis…" />
                   ) : clinics.length === 0 ? (
@@ -932,7 +938,11 @@ function Wizard({ auth, onDone }) {
 
               {step === 5 ? (
                 <div className="wiz-date-step">
-                  <p className="wiz-clinic-hint">Escolha a data de atendimento. Só aparecem dias com vagas disponíveis para a clínica e o tipo de animal selecionados.</p>
+                  <p className="wiz-clinic-hint">
+                    {isAdminScheduling
+                      ? 'Escolha a data de atendimento. Para administrador, aparecem datas futuras com vagas disponíveis mesmo fora da janela pública.'
+                      : 'Escolha a data de atendimento. Só aparecem dias com vagas disponíveis para a clínica e o tipo de animal selecionados.'}
+                  </p>
                   {datesLoading ? (
                     <Loading label="Buscando datas disponíveis" />
                   ) : availableDates.length === 0 ? (
@@ -2017,7 +2027,7 @@ function SlotsTab({ slots, clinics, reload, auth }) {
   const blank = { date: '', time: '09:00', species: 'gato', sex: 'femea', total_quantity: 1, clinic_id: '' };
   const [form, setForm] = useState(blank);
   const [editing, setEditing] = useState(null);
-  const [filters, setFilters] = useState({ clinic_id: '', date: '', type: '', status: '' });
+  const [filters, setFilters] = useState({ clinic_id: '', date: '', month: '', type: '', status: '' });
   const [error, setError] = useState('');
   const [selectedIds, setSelectedIds] = useState(new Set());
   const [renewRows, setRenewRows] = useState(null);
@@ -2035,6 +2045,7 @@ function SlotsTab({ slots, clinics, reload, auth }) {
       return (
         (!filters.clinic_id || String(slot.clinic_id) === filters.clinic_id) &&
         (!filterDate || toIsoDate(slot.date) === filterDate) &&
+        (!filters.month || getDateMonth(slot.date) === filters.month) &&
         (!filters.type || type === filters.type) &&
         (!filters.status || status === filters.status)
       );
@@ -2320,7 +2331,7 @@ function SlotsTab({ slots, clinics, reload, auth }) {
         </label>
         <button className="button primary" type="submit"><Save size={18} /> {editing ? 'Salvar' : 'Criar vaga'}</button>
       </form>
-      <div className="filter-bar" aria-label="Filtros de vagas">
+      <div className="filter-bar slots-filter-bar" aria-label="Filtros de vagas">
         <label className="field">
           <span>Clínica</span>
           <select value={filters.clinic_id} onChange={(event) => setFilters({ ...filters, clinic_id: event.target.value })}>
@@ -2329,6 +2340,15 @@ function SlotsTab({ slots, clinics, reload, auth }) {
           </select>
         </label>
         <DateField label="Data" value={filters.date} onChange={(value) => setFilters({ ...filters, date: value })} />
+        <label className="field">
+          <span>Mês</span>
+          <select value={filters.month} onChange={(event) => setFilters({ ...filters, month: event.target.value })}>
+            <option value="">Todos</option>
+            {MONTH_FILTER_OPTIONS.map(([value, label]) => (
+              <option key={value} value={value}>{label}</option>
+            ))}
+          </select>
+        </label>
         <label className="field">
           <span>Tipo</span>
           <select value={filters.type} onChange={(event) => setFilters({ ...filters, type: event.target.value })}>
@@ -2347,7 +2367,7 @@ function SlotsTab({ slots, clinics, reload, auth }) {
             <option value="inativa">Inativa</option>
           </select>
         </label>
-        <button className="button ghost" type="button" onClick={() => setFilters({ clinic_id: '', date: '', type: '', status: '' })}>
+        <button className="button ghost filter-clear-button" type="button" onClick={() => setFilters({ clinic_id: '', date: '', month: '', type: '', status: '' })}>
           Limpar filtros
         </button>
         <span className="filter-count">
@@ -2969,10 +2989,39 @@ function DateField({ label, value, onChange, required = false, hint = 'Formato: 
 
 function DateInput({ value, onChange, required = false, disabled = false, className = '', ariaInvalid = false }) {
   const [display, setDisplay] = useState(() => formatDateForInput(value));
+  const [calendarOpen, setCalendarOpen] = useState(false);
+  const [calendarMonth, setCalendarMonth] = useState(() => getCalendarMonth(value));
+  const wrapperRef = useRef(null);
 
   useEffect(() => {
     setDisplay(formatDateForInput(value));
   }, [value]);
+
+  useEffect(() => {
+    const iso = toIsoDate(value);
+    if (iso && !calendarOpen) setCalendarMonth(getCalendarMonth(iso));
+  }, [value, calendarOpen]);
+
+  useEffect(() => {
+    if (!calendarOpen) return undefined;
+
+    function handlePointerDown(event) {
+      if (wrapperRef.current && !wrapperRef.current.contains(event.target)) {
+        setCalendarOpen(false);
+      }
+    }
+
+    function handleKeyDown(event) {
+      if (event.key === 'Escape') setCalendarOpen(false);
+    }
+
+    document.addEventListener('mousedown', handlePointerDown);
+    document.addEventListener('keydown', handleKeyDown);
+    return () => {
+      document.removeEventListener('mousedown', handlePointerDown);
+      document.removeEventListener('keydown', handleKeyDown);
+    };
+  }, [calendarOpen]);
 
   function handleChange(event) {
     const nextDisplay = formatDateTyping(event.target.value);
@@ -2984,26 +3033,94 @@ function DateInput({ value, onChange, required = false, disabled = false, classN
     }
 
     const iso = toIsoDate(nextDisplay);
+    if (iso) setCalendarMonth(getCalendarMonth(iso));
     onChange(iso || nextDisplay);
   }
 
+  function toggleCalendar() {
+    if (disabled) return;
+    setCalendarMonth(getCalendarMonth(display || value));
+    setCalendarOpen((current) => !current);
+  }
+
+  function moveMonth(amount) {
+    setCalendarMonth((current) => shiftCalendarMonth(current, amount));
+  }
+
+  function selectDate(day) {
+    const iso = buildIsoDate(
+      String(day).padStart(2, '0'),
+      String(calendarMonth.month).padStart(2, '0'),
+      String(calendarMonth.year)
+    );
+    if (!iso) return;
+    setDisplay(formatDate(iso));
+    onChange(iso);
+    setCalendarOpen(false);
+  }
+
   const hasInvalidCompleteDate = display.length === 10 && !toIsoDate(display);
+  const selectedIso = toIsoDate(display) || toIsoDate(value);
+  const todayIso = getTodayIsoDate();
+  const calendarCells = buildCalendarCells(calendarMonth.year, calendarMonth.month);
+  const inputClassName = `date-input-field ${className}`.trim();
 
   return (
-    <input
-      className={className}
-      type="text"
-      value={display}
-      onChange={handleChange}
-      required={required}
-      disabled={disabled}
-      inputMode="numeric"
-      maxLength={10}
-      placeholder="dd/mm/aaaa"
-      pattern="\d{2}/\d{2}/\d{4}"
-      aria-invalid={ariaInvalid || hasInvalidCompleteDate}
-      title="Use o formato DD/MM/AAAA"
-    />
+    <div className="date-input-wrap" ref={wrapperRef}>
+      <input
+        className={inputClassName}
+        type="text"
+        value={display}
+        onChange={handleChange}
+        required={required}
+        disabled={disabled}
+        inputMode="numeric"
+        maxLength={10}
+        placeholder="dd/mm/aaaa"
+        pattern="\d{2}/\d{2}/\d{4}"
+        aria-invalid={ariaInvalid || hasInvalidCompleteDate}
+        title="Use o formato DD/MM/AAAA"
+      />
+      <button
+        className="date-calendar-trigger"
+        type="button"
+        onClick={toggleCalendar}
+        disabled={disabled}
+        aria-label="Abrir calendário"
+        title="Abrir calendário"
+      >
+        <Calendar size={18} />
+      </button>
+      {calendarOpen ? (
+        <div className="date-calendar-popover" role="dialog" aria-label="Selecionar data">
+          <div className="date-calendar-header">
+            <button type="button" onClick={() => moveMonth(-1)} aria-label="Mês anterior">‹</button>
+            <strong>{formatCalendarMonth(calendarMonth)}</strong>
+            <button type="button" onClick={() => moveMonth(1)} aria-label="Próximo mês">›</button>
+          </div>
+          <div className="date-calendar-grid date-calendar-weekdays">
+            {WEEKDAY_LABELS.map((day) => <span key={day}>{day}</span>)}
+          </div>
+          <div className="date-calendar-grid date-calendar-days">
+            {calendarCells.map((day, index) => {
+              const iso = day ? buildIsoDate(String(day).padStart(2, '0'), String(calendarMonth.month).padStart(2, '0'), String(calendarMonth.year)) : '';
+              return day ? (
+                <button
+                  key={iso}
+                  type="button"
+                  className={`${iso === selectedIso ? 'selected' : ''} ${iso === todayIso ? 'today' : ''}`.trim()}
+                  onClick={() => selectDate(day)}
+                >
+                  {day}
+                </button>
+              ) : (
+                <span key={`empty-${index}`} />
+              );
+            })}
+          </div>
+        </div>
+      ) : null}
+    </div>
   );
 }
 
@@ -3125,6 +3242,41 @@ function InlineAlert({ message }) {
 
 function Loading({ label }) {
   return <div className="loading">{label}...</div>;
+}
+
+function getTodayIsoDate() {
+  const today = new Date();
+  return `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}-${String(today.getDate()).padStart(2, '0')}`;
+}
+
+function getCalendarMonth(value = '') {
+  const iso = toIsoDate(value) || getTodayIsoDate();
+  const [year, month] = iso.split('-').map(Number);
+  return { year, month };
+}
+
+function shiftCalendarMonth(current, amount) {
+  const date = new Date(current.year, current.month - 1 + amount, 1);
+  return { year: date.getFullYear(), month: date.getMonth() + 1 };
+}
+
+function buildCalendarCells(year, month) {
+  const firstDay = new Date(year, month - 1, 1).getDay();
+  const daysInMonth = new Date(year, month, 0).getDate();
+  const cells = [
+    ...Array.from({ length: firstDay }, () => null),
+    ...Array.from({ length: daysInMonth }, (_item, index) => index + 1)
+  ];
+  while (cells.length < 42) cells.push(null);
+  return cells;
+}
+
+function formatCalendarMonth({ year, month }) {
+  const label = new Date(year, month - 1, 1).toLocaleDateString('pt-BR', {
+    month: 'long',
+    year: 'numeric'
+  });
+  return capitalize(label);
 }
 
 function formatDate(value) {
