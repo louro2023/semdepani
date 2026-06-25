@@ -4,7 +4,7 @@ Sistema web de cadastro de tutores e agendamento automatico de castracao animal 
 
 Este arquivo documenta o estado atual do projeto, regras de negocio, rotas principais, cuidados de deploy e orientacoes para futuras alteracoes.
 
-Ultima atualizacao: 2026-06-24.
+Ultima atualizacao: 2026-06-25.
 
 ---
 
@@ -77,8 +77,9 @@ dist/               Build Vite, gerado localmente/producao
 - Datas: padrao visual `DD/MM/AAAA` no frontend e exports CSV/PDF; o banco continua armazenando `YYYY-MM-DD`.
 - Horarios: campos de horario usam padrao 24 horas `HH:MM`, evitando exibicao AM/PM.
 - Disponibilidade publica: tutor e protetor so visualizam/selecionam vagas com pelo menos 8 horas de antecedencia.
+- Disponibilidade manual: admin pode usar `Disponibilizar Vagas Agora`/`Ocultar Vagas do Público` na aba Vagas para controlar se as vagas aparecem ao público.
 - Disponibilidade para admin: admin logado pode agendar vagas futuras ja lancadas no sistema, mesmo fora da janela publica de 5 dias e sem a trava de 8 horas.
-- Disponibilidade por mes: uma vaga so fica visivel ao publico a partir de 5 dias antes do inicio do mes da propria vaga.
+- Com a disponibilizacao manual desligada, nenhuma vaga aparece ao público.
 - API: rotas `/api` desconhecidas retornam JSON de erro antes do fallback da SPA, evitando resposta HTML em chamadas do frontend.
 - Auditoria: removidos import/funcao sem uso (`Plus` no frontend e `bookingTargetMonth` no banco).
 
@@ -88,7 +89,7 @@ dist/               Build Vite, gerado localmente/producao
 
 ### Orientacao Sobre as Ultimas Mudancas
 
-As mudancas recentes de filtros, renovacao de vagas, datas em `DD/MM/AAAA`, horarios em 24h, regra de 8 horas e janela de 5 dias nao exigiram nova tabela, nova coluna nem migracao manual.
+As mudancas recentes de filtros, renovacao de vagas, datas em `DD/MM/AAAA`, horarios em 24h, regra de 8 horas e controle manual de exibicao publica nao exigiram nova tabela, nova coluna nem migracao manual.
 
 O banco continua usando:
 
@@ -247,23 +248,27 @@ Limites:
 - Protetor Cadastrado: ate 4 agendamentos por mes.
 - Admin: ilimitado.
 
-O limite mensal e calculado pelo mes do slot escolhido, usando `getMonthlyUsage()`.
+O limite mensal e calculado pelo mes do slot escolhido. Na reserva, a contagem usa o CPF do usuario para aplicar o limite do perfil ao mesmo CPF.
 
 ### Regra de Disponibilidade das Vagas
 
-Tutor e protetor so podem visualizar e selecionar vagas que cumpram todas as regras abaixo:
+Tutor e protetor so podem visualizar e selecionar vagas quando o admin ativar `Disponibilizar Vagas Agora`.
+
+Com a disponibilizacao ativa, continuam obrigatorias as regras abaixo:
 
 - Vaga ativa.
 - Clinica ativa.
 - Vaga com capacidade disponivel.
 - Data da vaga maior ou igual a data atual local.
 - Data/hora da vaga pelo menos 8 horas depois do momento atual local.
-- Vaga liberada pela janela mensal: a data atual precisa ser igual ou posterior a 5 dias antes do primeiro dia do mes da vaga.
+- Limite mensal por CPF.
+
+Com a disponibilizacao desligada, as rotas publicas de vagas retornam clinicas sem vagas disponiveis e nenhuma data selecionavel.
 
 Exemplo:
 
 - Vaga em `28/05/2026 11:00`.
-- Ela so aparece se o momento atual for ate no maximo `28/05/2026 03:00` ou antes, respeitando o intervalo minimo de 8 horas.
+- Com `Disponibilizar Vagas Agora` ativo, ela so aparece se o momento atual for ate no maximo `28/05/2026 03:00` ou antes, respeitando o intervalo minimo de 8 horas.
 - Se faltar menos de 8 horas, a vaga fica oculta e tambem nao pode ser reservada pela API.
 
 Para administrador logado:
@@ -297,8 +302,8 @@ Comportamento atual:
 - Clinicas sem vaga aparecem na lista, mas desabilitadas.
 - O texto exibido e `Sem vagas disponiveis no momento`.
 - Depois de escolher a clinica, o usuario escolhe uma data disponivel para a unidade.
-- Para tutor/protetor, datas lotadas, fora da janela mensal ou com menos de 8 horas de antecedencia nao aparecem.
-- Para admin logado, datas futuras com vaga disponivel aparecem mesmo fora da janela mensal e sem a trava de 8 horas.
+- Para tutor/protetor, datas so aparecem quando `Disponibilizar Vagas Agora` esta ativo, e ainda respeitam lotacao e 8 horas de antecedencia.
+- Para admin logado, datas futuras com vaga disponivel aparecem mesmo sem disponibilizacao publica e sem a trava de 8 horas.
 - O usuario escolhe a clinica e a data, mas nao escolhe horario.
 - O backend reserva automaticamente o primeiro horario compativel disponivel na data escolhida.
 
@@ -325,8 +330,9 @@ A aba `Vagas` permite:
 - Desativar vaga.
 - Excluir definitivamente quando permitido.
 - Selecionar varias vagas.
-- Filtrar por clinica, data, tipo e status.
+- Filtrar por clinica, data, mes, tipo e status.
 - Paginar a lista.
+- Ativar `Disponibilizar Vagas Agora` ou `Ocultar Vagas do Público`, salvo na tabela `settings` com a chave `public_slots_release_now`.
 
 Datas nos formularios aparecem como `DD/MM/AAAA`.
 
@@ -436,6 +442,7 @@ Comportamento:
 | PUT/DELETE | `/api/admin/clinics/:id` | Editar/desativar/excluir clinica |
 | GET/POST | `/api/admin/slots` | Listar/criar vagas |
 | PUT/DELETE | `/api/admin/slots/:id` | Editar/desativar/excluir vaga |
+| GET/POST | `/api/admin/slots/release-now` | Consultar/alterar liberacao manual de vagas ao publico |
 | POST | `/api/admin/slots/renew` | Renovar vagas selecionadas com novos dados |
 | POST | `/api/admin/slots/auto-renew` | Renovacao automatica mensal |
 | GET/POST/PUT | `/api/admin/users` | CRUD usuarios |
@@ -595,6 +602,7 @@ cp "$DB_PATH" "$DB_PATH.bak-$(date +%F-%H%M)"
 sqlite3 data/castracao.sqlite "PRAGMA table_info(users);"
 sqlite3 data/castracao.sqlite "PRAGMA table_info(appointments);"
 sqlite3 data/castracao.sqlite "PRAGMA table_info(slots);"
+sqlite3 data/castracao.sqlite "PRAGMA table_info(settings);"
 ```
 
 Se usar `DB_PATH`:
@@ -603,6 +611,81 @@ Se usar `DB_PATH`:
 sqlite3 "$DB_PATH" "PRAGMA table_info(users);"
 sqlite3 "$DB_PATH" "PRAGMA table_info(appointments);"
 sqlite3 "$DB_PATH" "PRAGMA table_info(slots);"
+sqlite3 "$DB_PATH" "PRAGMA table_info(settings);"
+```
+
+### Checklist de Vagas em Producao
+
+Para o publico enxergar vagas, confirme estes pontos no banco de producao:
+
+- O servidor foi reiniciado depois do deploy, para executar `initSchema()`.
+- A tabela `settings` existe.
+- A chave `public_slots_release_now` esta com valor `1`.
+- As vagas estao com `active = 1`.
+- As clinicas das vagas estao com `active = 1`.
+- As vagas possuem `clinic_id` preenchido e apontando para uma clinica existente.
+- `occupied_quantity < total_quantity`.
+- A data/hora da vaga ainda respeita a regra de 8 horas.
+
+Consultar a chave que controla exibicao publica:
+
+```bash
+sqlite3 data/castracao.sqlite "SELECT key, value FROM settings WHERE key = 'public_slots_release_now';"
+```
+
+Se usar `DB_PATH`:
+
+```bash
+sqlite3 "$DB_PATH" "SELECT key, value FROM settings WHERE key = 'public_slots_release_now';"
+```
+
+Valores:
+
+- `1`: vagas disponiveis aparecem ao publico.
+- `0` ou ausencia da chave: vagas ficam ocultas ao publico.
+
+Ativar a exibicao publica direto no banco, somente em emergencia:
+
+```bash
+sqlite3 data/castracao.sqlite "INSERT OR REPLACE INTO settings (key, value) VALUES ('public_slots_release_now', '1');"
+```
+
+Desativar a exibicao publica direto no banco:
+
+```bash
+sqlite3 data/castracao.sqlite "INSERT OR REPLACE INTO settings (key, value) VALUES ('public_slots_release_now', '0');"
+```
+
+Se usar `DB_PATH`, troque `data/castracao.sqlite` por `"$DB_PATH"`.
+
+Listar vagas que deveriam aparecer ao publico quando `public_slots_release_now = 1`:
+
+```bash
+sqlite3 data/castracao.sqlite "SELECT s.id, s.date, s.time, s.species, s.sex, s.total_quantity, s.occupied_quantity, c.name AS clinic FROM slots s JOIN clinics c ON c.id = s.clinic_id WHERE s.active = 1 AND c.active = 1 AND s.occupied_quantity < s.total_quantity AND s.date >= date('now', 'localtime') AND datetime(s.date || ' ' || s.time) >= datetime('now', 'localtime', '+8 hours') ORDER BY s.date, s.time LIMIT 50;"
+```
+
+Verificar vagas antigas sem `clinic_id`, que nao aparecem nas consultas publicas:
+
+```bash
+sqlite3 data/castracao.sqlite "SELECT id, date, time, clinic, clinic_id FROM slots WHERE clinic_id IS NULL OR clinic_id = '';"
+```
+
+O `migrateSlotClinics()` tenta preencher `clinic_id` automaticamente pelo nome em `slots.clinic`. Se ainda houver vagas sem `clinic_id`, primeiro confira se a clinica existe:
+
+```bash
+sqlite3 data/castracao.sqlite "SELECT id, name, active FROM clinics ORDER BY name;"
+```
+
+Depois corrija manualmente apenas as vagas conferidas. Exemplo:
+
+```bash
+sqlite3 data/castracao.sqlite "UPDATE slots SET clinic_id = (SELECT id FROM clinics WHERE clinics.name = slots.clinic) WHERE clinic_id IS NULL AND clinic IS NOT NULL AND EXISTS (SELECT 1 FROM clinics WHERE clinics.name = slots.clinic);"
+```
+
+Depois de qualquer ajuste manual em producao, reinicie a aplicacao:
+
+```bash
+pm2 restart all
 ```
 
 ### Migracao Manual Somente em Emergencia
@@ -675,7 +758,7 @@ Em producao, configurar `ADMIN_CPF` e `ADMIN_PASSWORD`.
 - Reativacao de cancelado incrementa novamente a vaga, respeitando capacidade salvo override de admin.
 - `slots.clinic` e texto legado; `slots.clinic_id` e a FK atual.
 - `migrateSlotClinics()` preenche `clinic_id` para slots antigos quando possivel.
-- `bookingTargetMonth()` foi removida porque a regra antiga de mes alvo foi substituida pela janela de visibilidade de 5 dias antes do inicio do mes da vaga.
+- `bookingTargetMonth()` foi removida; a exibicao publica agora e controlada pela chave `public_slots_release_now`.
 - Upload de documentos ainda existe no backend por compatibilidade, mas o fluxo principal orienta levar documentos fisicos.
 - Ao alterar regras de disponibilidade, atualizar sempre os quatro pontos: `/api/clinics/available`, `/api/clinics/:clinicId/available-dates`, `/api/availability` e `createAutomaticAppointment()`.
 - Ao alterar formato de data/hora, manter conversao entre frontend (`DD/MM/AAAA`, `HH:MM`) e banco (`YYYY-MM-DD`, `HH:MM`).

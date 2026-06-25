@@ -1581,6 +1581,44 @@ select:focus,
   flex-wrap: wrap;
 }
 
+.release-now-button {
+  min-width: 230px;
+}
+
+.release-now-button.active {
+  color: #0d6a4b;
+  background: #e5f7ee;
+  border-color: #a8d8c0;
+}
+
+.release-now-button.active:hover:not(:disabled) {
+  color: #084d37;
+  background: #d8f0e5;
+}
+
+.release-now-badge {
+  display: inline-flex;
+  align-items: center;
+  min-height: 34px;
+  padding: 4px 10px;
+  border: 1px solid transparent;
+  border-radius: 999px;
+  font-size: 0.8rem;
+  font-weight: 800;
+}
+
+.release-now-badge.active {
+  color: #0d6a4b;
+  background: #e5f7ee;
+  border-color: #a8d8c0;
+}
+
+.release-now-badge.inactive {
+  color: #5f6470;
+  background: #eceff3;
+  border-color: #d8dce3;
+}
+
 .renewal-screen {
   gap: 18px;
 }

@@ -2035,6 +2035,8 @@ function SlotsTab({ slots, clinics, reload, auth }) {
   const [selectedIds, setSelectedIds] = useState(new Set());
   const [renewRows, setRenewRows] = useState(null);
   const [renewError, setRenewError] = useState('');
+  const [releaseNowEnabled, setReleaseNowEnabled] = useState(false);
+  const [releaseNowLoading, setReleaseNowLoading] = useState(false);
   const [page, setPage] = useState(1);
 
   const clinicOptions = useMemo(() => clinics.filter((clinic) => clinic.active), [clinics]);
@@ -2060,6 +2062,20 @@ function SlotsTab({ slots, clinics, reload, auth }) {
   const pagedSlots = filteredSlots.slice((safeSlotsPage - 1) * SLOTS_PAGE_SIZE, safeSlotsPage * SLOTS_PAGE_SIZE);
 
   useEffect(() => { setPage(1); }, [filters]);
+
+  useEffect(() => {
+    let cancelled = false;
+    request('/admin/slots/release-now', {}, auth.token)
+      .then((data) => {
+        if (!cancelled) setReleaseNowEnabled(Boolean(data.enabled));
+      })
+      .catch((err) => {
+        if (!cancelled) setError(err.message);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [auth.token]);
 
   const speciesSummary = useMemo(() => {
     const map = {};
@@ -2220,6 +2236,22 @@ function SlotsTab({ slots, clinics, reload, auth }) {
     if (failed.length) setError(`${failed.length} vaga(s) não puderam ser excluídas (possuem agendamentos ativos).`);
     setSelectedIds(new Set());
     reload();
+  }
+
+  async function toggleReleaseNow() {
+    setReleaseNowLoading(true);
+    setError('');
+    try {
+      const data = await request('/admin/slots/release-now', {
+        method: 'POST',
+        body: { enabled: !releaseNowEnabled }
+      }, auth.token);
+      setReleaseNowEnabled(Boolean(data.enabled));
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setReleaseNowLoading(false);
+    }
   }
 
   if (renewRows) {
@@ -2390,6 +2422,22 @@ function SlotsTab({ slots, clinics, reload, auth }) {
         </div>
       )}
       <div className="slots-toolbar">
+        <button
+          className={`button release-now-button ${releaseNowEnabled ? 'active' : 'primary'}`}
+          type="button"
+          onClick={toggleReleaseNow}
+          disabled={releaseNowLoading}
+        >
+          {releaseNowEnabled ? <CheckCircle2 size={18} /> : <CalendarPlus size={18} />}
+          {releaseNowLoading
+            ? 'Atualizando...'
+            : releaseNowEnabled
+              ? 'Ocultar Vagas do Público'
+              : 'Disponibilizar Vagas Agora'}
+        </button>
+        <span className={`release-now-badge ${releaseNowEnabled ? 'active' : 'inactive'}`}>
+          {releaseNowEnabled ? 'Vagas visíveis ao público' : 'Vagas ocultas do público'}
+        </span>
         <button className="button ghost" type="button" onClick={toggleSelectAll}>
           {allSelected ? 'Desmarcar Todas' : 'Selecionar Todas'}
         </button>

@@ -42,6 +42,7 @@ const smtpTransporter = process.env.SMTP_HOST
 if (!process.env.JWT_SECRET) throw new Error('JWT_SECRET env var obrigatório. Em dev, adicione ao .env: JWT_SECRET=dev-secret-local');
 const JWT_SECRET = process.env.JWT_SECRET;
 const PORT = Number(process.env.PORT || 4000);
+const PUBLIC_SLOTS_RELEASE_NOW_KEY = 'public_slots_release_now';
 const ROLE_LIMITS = {
   tutor: 1,
   protetor: 4,
@@ -562,6 +563,16 @@ app.delete('/api/admin/clinics/:id', requireAdmin, (req, res) => {
   } catch (error) {
     sendError(res, error);
   }
+});
+
+app.get('/api/admin/slots/release-now', requireAdmin, (_req, res) => {
+  res.json({ enabled: publicSlotsReleaseNowEnabled() });
+});
+
+app.post('/api/admin/slots/release-now', requireAdmin, (req, res) => {
+  const enabled = req.body.enabled === true || req.body.enabled === 1 || req.body.enabled === '1' || req.body.enabled === 'true';
+  setPublicSlotsReleaseNowEnabled(enabled);
+  res.json({ enabled });
 });
 
 app.get('/api/admin/slots', requireAdmin, (_req, res) => {
@@ -1207,9 +1218,9 @@ async function createAutomaticAppointment(user, animalInput, terms, options = {}
     }
 
     const selectedSlot = slots[0];
-    const currentUsage = getMonthlyUsage(user.id, selectedSlot.date);
+    const currentUsage = getMonthlyUsageByCpf(user.cpf, selectedSlot.date);
     if (limit !== null && currentUsage >= limit) {
-      throw httpError(409, `Limite de ${limit} agendamento(s) por mes atingido.`);
+      throw httpError(409, `Limite de ${limit} agendamento(s) por mes para este CPF atingido.`);
     }
 
     const update = db.prepare(`
@@ -1278,6 +1289,20 @@ function getMonthlyUsage(userId, dateString) {
       AND s.date >= ?
       AND s.date < ?
   `).get(userId, start, end).total;
+}
+
+function getMonthlyUsageByCpf(cpf, dateString) {
+  const { start, end } = monthRange(dateString);
+  return db.prepare(`
+    SELECT COUNT(*) AS total
+    FROM appointments a
+    JOIN users u ON u.id = a.user_id
+    JOIN slots s ON s.id = a.slot_id
+    WHERE u.cpf = ?
+      AND a.status != 'cancelado'
+      AND s.date >= ?
+      AND s.date < ?
+  `).get(normalizeCpf(cpf), start, end).total;
 }
 
 function getCurrentMonthUsage(userId) {
@@ -1513,6 +1538,18 @@ function optionalAuth(req, _res, next) {
   next();
 }
 
+function publicSlotsReleaseNowEnabled() {
+  return db.prepare('SELECT value FROM settings WHERE key = ?').get(PUBLIC_SLOTS_RELEASE_NOW_KEY)?.value === '1';
+}
+
+function setPublicSlotsReleaseNowEnabled(enabled) {
+  db.prepare(`
+    INSERT INTO settings (key, value)
+    VALUES (?, ?)
+    ON CONFLICT(key) DO UPDATE SET value = excluded.value
+  `).run(PUBLIC_SLOTS_RELEASE_NOW_KEY, enabled ? '1' : '0');
+}
+
 function slotAvailabilityDateGuard(user, alias = '') {
   const prefix = alias ? `${alias}.` : '';
   const dateField = `${prefix}date`;
@@ -1520,11 +1557,13 @@ function slotAvailabilityDateGuard(user, alias = '') {
   if (user?.role === 'admin') {
     return `AND ${dateField} >= date('now', 'localtime')`;
   }
-  return `
+  if (publicSlotsReleaseNowEnabled()) {
+    return `
         AND ${dateField} >= date('now', 'localtime')
-        AND date('now', 'localtime') >= date(${dateField}, 'start of month', '-5 days')
         AND datetime(${dateField} || ' ' || ${timeField}) >= datetime('now', 'localtime', '+8 hours')
       `;
+  }
+  return 'AND 1 = 0';
 }
 
 function requireAuth(req, res, next) {
