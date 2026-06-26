@@ -467,6 +467,7 @@ app.get('/api/admin/reports', requireAdmin, (_req, res) => {
       an.species,
       an.sex,
       an.breed,
+      s.clinic_id,
       COALESCE(c.name, s.clinic) AS clinic,
       s.date,
       s.time,
@@ -481,7 +482,54 @@ app.get('/api/admin/reports', requireAdmin, (_req, res) => {
     ORDER BY s.date ASC, s.time ASC
   `).all().map((r) => ({ ...r, animal_type_label: animalTypeLabel(r.species, r.sex) }));
 
-  res.json({ totals, perDay, perClinic, castrationsByClinic, castrationsByType, castrationsDetail });
+  const appointmentDetails = db.prepare(`
+    SELECT
+      a.id,
+      a.status,
+      a.reason,
+      a.protocol,
+      a.microchip,
+      a.created_at,
+      a.substitute_responsible,
+      a.responsible_name,
+      a.responsible_cpf,
+      a.responsible_cep,
+      a.responsible_address,
+      a.responsible_address_number,
+      a.responsible_neighborhood,
+      a.responsible_phone,
+      a.responsible_email,
+      u.name AS tutor_name,
+      u.cpf AS tutor_cpf,
+      u.phone AS tutor_phone,
+      u.cep AS tutor_cep,
+      u.address AS tutor_address,
+      u.address_number AS tutor_address_number,
+      u.neighborhood AS tutor_neighborhood,
+      u.email AS tutor_email,
+      an.name AS animal_name,
+      an.species,
+      an.sex,
+      an.breed,
+      an.approximate_age,
+      s.clinic_id,
+      COALESCE(c.name, s.clinic) AS clinic,
+      s.date,
+      s.time
+    FROM appointments a
+    JOIN users u ON u.id = a.user_id
+    JOIN animals an ON an.id = a.animal_id
+    JOIN slots s ON s.id = a.slot_id
+    LEFT JOIN clinics c ON c.id = s.clinic_id
+    ORDER BY s.date ASC, s.time ASC, a.id ASC
+  `).all().map((r) => ({
+    ...r,
+    substitute_responsible: Boolean(r.substitute_responsible),
+    animal_type_label: animalTypeLabel(r.species, r.sex),
+    status_label: statusLabel(r.status)
+  }));
+
+  res.json({ totals, perDay, perClinic, castrationsByClinic, castrationsByType, castrationsDetail, appointmentDetails });
 });
 
 app.get('/api/admin/clinics', requireAdmin, (_req, res) => {

@@ -4,7 +4,7 @@ Sistema web de cadastro de tutores e agendamento automatico de castracao animal 
 
 Este arquivo documenta o estado atual do projeto, regras de negocio, rotas principais, cuidados de deploy e orientacoes para futuras alteracoes.
 
-Ultima atualizacao: 2026-06-25.
+Ultima atualizacao: 2026-06-26.
 
 ---
 
@@ -89,7 +89,7 @@ dist/               Build Vite, gerado localmente/producao
 
 ### Orientacao Sobre as Ultimas Mudancas
 
-As mudancas recentes de filtros, renovacao de vagas, datas em `DD/MM/AAAA`, horarios em 24h, regra de 8 horas e controle manual de exibicao publica nao exigiram nova tabela, nova coluna nem migracao manual.
+As mudancas recentes de filtros, renovacao de vagas, datas em `DD/MM/AAAA`, horarios em 24h, regra de 8 horas, controle manual de exibicao publica e relatorio completo nao exigiram nova tabela, nova coluna nem migracao manual.
 
 O banco continua usando:
 
@@ -398,6 +398,15 @@ Comportamento:
 - Duplicata retorna erro 409 com mensagem identificando o agendamento conflitante.
 - O microchip e exibido na tabela de agendamentos da clinica/admin.
 - O microchip aparece no relatorio de castracoes PDF e CSV.
+
+### Relatorios Administrativos
+
+- A aba Admin > Relatorios possui o botao `Exportar PDF` com o resumo ja existente.
+- Ao lado dele existe `Baixar relatorio completo`, que abre uma versao de impressao para salvar em PDF ou imprimir.
+- O relatorio completo pode ser gerado para todas as clinicas ou para uma clinica especifica.
+- O relatorio completo usa `appointmentDetails` de `/api/admin/reports`.
+- Ele inclui status, data, horario, clinica, tutor, CPF, telefone, endereco completo do tutor, responsavel que levou o animal, telefone/endereco desse responsavel quando houver substituto, animal, tipo, raca, idade e microchip.
+- O layout do relatorio completo e configurado para A4 paisagem e inclui graficos por status, por clinica/data e por tipo de castracao realizada.
 
 ### Protetor Cadastrado
 

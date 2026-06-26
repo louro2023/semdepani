@@ -1533,7 +1533,299 @@ function printReport(reports) {
   setTimeout(() => { win.print(); }, 400);
 }
 
+function printCompleteReport(reports, clinicFilter = '') {
+  const details = filterReportAppointments(reports?.appointmentDetails || [], clinicFilter);
+  const date = new Date().toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit', year: 'numeric' });
+  const dateTime = new Date().toLocaleString('pt-BR', {
+    day: '2-digit',
+    month: '2-digit',
+    year: 'numeric',
+    hour: '2-digit',
+    minute: '2-digit'
+  });
+  const scopeLabel = clinicFilter || 'Todas as clínicas';
+  const totals = countAppointmentsByStatus(details);
+  const statusRows = APPOINTMENT_STATUS_OPTIONS.map(([status, label]) => ({
+    label,
+    value: totals[status] || 0,
+    color: statusReportColor(status)
+  }));
+  const clinicRows = groupReportRows(details, (row) => row.clinic || 'Sem clínica');
+  const typeRows = groupReportRows(
+    details.filter((row) => row.status === 'realizado'),
+    (row) => capitalize(row.animal_type_label || animalLabel(row.species, row.sex))
+  );
+  const dayRows = groupReportRows(
+    details.filter((row) => row.status !== 'cancelado'),
+    (row) => formatDate(row.date),
+    { sortByLabel: true }
+  ).slice(0, 18);
+
+  const detailRows = details.map((row) => {
+    const tutorAddress = buildReportAddress(row.tutor_address, row.tutor_address_number, row.tutor_neighborhood, row.tutor_cep);
+    const attendanceResponsible = getAttendanceResponsible(row);
+    const responsibleAddress = buildReportAddress(
+      attendanceResponsible.address,
+      attendanceResponsible.addressNumber,
+      attendanceResponsible.neighborhood,
+      attendanceResponsible.cep
+    );
+    return `
+      <tr>
+        <td class="mono">${escapeReportHtml(row.protocol)}</td>
+        <td><span class="status-pill ${escapeReportHtml(row.status)}">${escapeReportHtml(row.status_label || row.status)}</span></td>
+        <td>${escapeReportHtml(formatDate(row.date))}<br><small>${escapeReportHtml(row.time || '-')}</small></td>
+        <td>${escapeReportHtml(row.clinic || '-')}</td>
+        <td>${reportPersonBlock(row.tutor_name, row.tutor_cpf, row.tutor_phone, tutorAddress)}</td>
+        <td>${reportPersonBlock(attendanceResponsible.name, attendanceResponsible.cpf, attendanceResponsible.phone, responsibleAddress, attendanceResponsible.label)}</td>
+        <td>
+          <strong>${escapeReportHtml(row.animal_name || '-')}</strong>
+          <small>${escapeReportHtml(capitalize(row.animal_type_label || animalLabel(row.species, row.sex)))} · ${escapeReportHtml(row.breed || '-')} · ${escapeReportHtml(row.approximate_age || '-')}</small>
+        </td>
+        <td class="mono">${escapeReportHtml(formatMicrochip(row.microchip))}</td>
+      </tr>
+    `;
+  }).join('');
+
+  const html = `<!DOCTYPE html><html lang="pt-BR"><head><meta charset="UTF-8">
+  <title>Relatório Completo - ${escapeReportHtml(scopeLabel)} - ${date}</title>
+  <style>
+    @page { size: A4 landscape; margin: 11mm; }
+    * { box-sizing: border-box; }
+    body { font-family: 'Segoe UI', Arial, sans-serif; color: #16251f; margin: 0; padding: 0; background: #fff; font-size: 10.5px; }
+    header { display: flex; justify-content: space-between; gap: 24px; border-bottom: 2px solid #0c9278; padding-bottom: 12px; margin-bottom: 16px; }
+    h1 { font-size: 22px; margin: 0 0 6px; color: #10251e; }
+    h2 { font-size: 12px; margin: 0 0 10px; text-transform: uppercase; letter-spacing: .05em; color: #0c9278; }
+    p { margin: 0; }
+    .sub { color: #5d716b; font-size: 11px; line-height: 1.45; }
+    .scope { min-width: 220px; border: 1px solid #cde2dc; border-radius: 8px; padding: 10px 12px; background: #f6fbf9; }
+    .scope strong { display: block; font-size: 14px; margin-top: 2px; }
+    section { margin-bottom: 16px; page-break-inside: avoid; }
+    .metrics { display: grid; grid-template-columns: repeat(5, 1fr); gap: 8px; margin-bottom: 16px; }
+    .metric { border: 1px solid #cde2dc; border-radius: 8px; padding: 10px 12px; background: #f8fbfa; }
+    .metric strong { display: block; font-size: 22px; line-height: 1; margin-bottom: 3px; color: #0c9278; }
+    .metric span { color: #5d716b; text-transform: uppercase; letter-spacing: .04em; font-size: 9px; }
+    .charts { display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; }
+    .chart-card { border: 1px solid #cde2dc; border-radius: 8px; padding: 10px; min-height: 132px; }
+    .chart-row { display: grid; grid-template-columns: minmax(80px, 1fr) 3fr 36px; align-items: center; gap: 8px; margin: 7px 0; }
+    .chart-label { color: #344b44; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .chart-track { height: 9px; background: #e2eee9; border-radius: 999px; overflow: hidden; }
+    .chart-fill { height: 100%; border-radius: 999px; background: #0c9278; }
+    .chart-value { text-align: right; font-weight: 700; font-variant-numeric: tabular-nums; }
+    table { width: 100%; border-collapse: collapse; table-layout: fixed; }
+    th { background: #e8f7f0; color: #46645c; text-align: left; text-transform: uppercase; letter-spacing: .04em; font-size: 8.8px; padding: 7px; border: 1px solid #c9ddd7; }
+    td { vertical-align: top; padding: 7px; border: 1px solid #dae8e3; line-height: 1.32; word-break: break-word; }
+    tr:nth-child(even) td { background: #fbfdfc; }
+    small { display: block; color: #526963; margin-top: 2px; }
+    .mono { font-family: Consolas, 'Courier New', monospace; letter-spacing: .02em; }
+    .person strong { display: block; font-size: 10.5px; margin-bottom: 2px; }
+    .person span { display: block; color: #31453f; }
+    .person .tag { display: inline-block; margin-bottom: 3px; padding: 2px 6px; border-radius: 999px; background: #edf5f2; color: #48635b; font-size: 8.5px; text-transform: uppercase; letter-spacing: .04em; }
+    .status-pill { display: inline-block; padding: 3px 7px; border-radius: 999px; font-weight: 700; white-space: nowrap; background: #edf5f2; color: #334d45; }
+    .status-pill.realizado { color: #0f6f4e; background: #e5f6ed; }
+    .status-pill.agendado { color: #075f85; background: #e7f4fb; }
+    .status-pill.nao_realizado { color: #93420f; background: #fff1e5; }
+    .status-pill.cancelado { color: #a11d17; background: #feeceb; }
+    .empty { color: #5d716b; border: 1px dashed #cde2dc; border-radius: 8px; padding: 16px; }
+    .print-break { page-break-before: always; }
+    @media print {
+      body { print-color-adjust: exact; -webkit-print-color-adjust: exact; }
+      button { display: none; }
+    }
+  </style></head><body>
+    <header>
+      <div>
+        <h1>Relatório completo de agendamentos e castrações</h1>
+        <p class="sub">Programa Municipal de Castração Animal · Gerado em ${escapeReportHtml(dateTime)}</p>
+      </div>
+      <div class="scope">
+        <p class="sub">Clínica selecionada</p>
+        <strong>${escapeReportHtml(scopeLabel)}</strong>
+      </div>
+    </header>
+
+    <section>
+      <div class="metrics">
+        <div class="metric"><strong>${details.length}</strong><span>Total no relatório</span></div>
+        <div class="metric"><strong>${totals.agendado || 0}</strong><span>Agendados</span></div>
+        <div class="metric"><strong>${totals.realizado || 0}</strong><span>Realizados</span></div>
+        <div class="metric"><strong>${totals.nao_realizado || 0}</strong><span>Não realizados</span></div>
+        <div class="metric"><strong>${totals.cancelado || 0}</strong><span>Cancelados</span></div>
+      </div>
+    </section>
+
+    <section>
+      <h2>Gráficos do relatório</h2>
+      <div class="charts">
+        ${reportChart('Status dos agendamentos', statusRows)}
+        ${reportChart(clinicFilter ? 'Agendamentos por data' : 'Agendamentos por clínica', clinicFilter ? dayRows : clinicRows)}
+        ${reportChart('Castrações realizadas por tipo', typeRows)}
+      </div>
+    </section>
+
+    <section class="print-break">
+      <h2>Detalhamento completo</h2>
+      ${details.length === 0
+        ? '<p class="empty">Nenhum agendamento encontrado para a clínica selecionada.</p>'
+        : `<table>
+            <colgroup>
+              <col style="width:9%">
+              <col style="width:8%">
+              <col style="width:8%">
+              <col style="width:11%">
+              <col style="width:19%">
+              <col style="width:19%">
+              <col style="width:16%">
+              <col style="width:10%">
+            </colgroup>
+            <thead>
+              <tr>
+                <th>Protocolo</th>
+                <th>Status</th>
+                <th>Data/Hora</th>
+                <th>Clínica</th>
+                <th>Tutor</th>
+                <th>Responsável que levou</th>
+                <th>Animal</th>
+                <th>Microchip</th>
+              </tr>
+            </thead>
+            <tbody>${detailRows}</tbody>
+          </table>`}
+    </section>
+  </body></html>`;
+
+  const win = window.open('', '_blank', 'width=1200,height=800');
+  win.document.write(html);
+  win.document.close();
+  win.focus();
+  setTimeout(() => { win.print(); }, 500);
+}
+
+function filterReportAppointments(rows, clinicFilter) {
+  if (!clinicFilter) return rows;
+  return rows.filter((row) => row.clinic === clinicFilter);
+}
+
+function countAppointmentsByStatus(rows) {
+  return rows.reduce((acc, row) => {
+    acc[row.status] = (acc[row.status] || 0) + 1;
+    return acc;
+  }, {});
+}
+
+function groupReportRows(rows, labelFn, options = {}) {
+  const map = rows.reduce((acc, row) => {
+    const label = labelFn(row) || 'Sem informação';
+    acc.set(label, (acc.get(label) || 0) + 1);
+    return acc;
+  }, new Map());
+  const grouped = Array.from(map, ([label, value]) => ({ label, value }));
+  if (options.sortByLabel) return grouped.sort((a, b) => a.label.localeCompare(b.label, 'pt-BR'));
+  return grouped.sort((a, b) => b.value - a.value || a.label.localeCompare(b.label, 'pt-BR'));
+}
+
+function reportChart(title, rows) {
+  const max = Math.max(...rows.map((row) => row.value), 1);
+  const body = rows.length
+    ? rows.map((row) => {
+      const pct = row.value > 0 ? Math.max(3, Math.round((row.value / max) * 100)) : 0;
+      const color = row.color || '#0c9278';
+      return `
+        <div class="chart-row">
+          <span class="chart-label">${escapeReportHtml(row.label)}</span>
+          <span class="chart-track"><span class="chart-fill" style="width:${pct}%;background:${escapeReportHtml(color)};"></span></span>
+          <span class="chart-value">${escapeReportHtml(row.value)}</span>
+        </div>
+      `;
+    }).join('')
+    : '<p class="sub">Sem dados para exibir.</p>';
+  return `<div class="chart-card"><h2>${escapeReportHtml(title)}</h2>${body}</div>`;
+}
+
+function statusReportColor(status) {
+  if (status === 'realizado') return '#18825c';
+  if (status === 'agendado') return '#0b6f9a';
+  if (status === 'nao_realizado') return '#c05a21';
+  if (status === 'cancelado') return '#b42318';
+  return '#0c9278';
+}
+
+function buildReportAddress(address, number, neighborhood, cep) {
+  const parts = [];
+  if (address) parts.push(address);
+  if (number) parts.push(`Nº ${number}`);
+  if (neighborhood) parts.push(`Bairro ${neighborhood}`);
+  if (cep) parts.push(`CEP ${maskCep(cep)}`);
+  return parts.join(', ') || '-';
+}
+
+function getAttendanceResponsible(row) {
+  if (row.substitute_responsible) {
+    return {
+      label: 'Responsável substituto',
+      name: row.responsible_name,
+      cpf: row.responsible_cpf,
+      phone: row.responsible_phone,
+      address: row.responsible_address,
+      addressNumber: row.responsible_address_number,
+      neighborhood: row.responsible_neighborhood,
+      cep: row.responsible_cep
+    };
+  }
+  return {
+    label: 'Mesmo tutor',
+    name: row.tutor_name,
+    cpf: row.tutor_cpf,
+    phone: row.tutor_phone,
+    address: row.tutor_address,
+    addressNumber: row.tutor_address_number,
+    neighborhood: row.tutor_neighborhood,
+    cep: row.tutor_cep
+  };
+}
+
+function reportPersonBlock(name, cpf, phone, address, label = '') {
+  return `
+    <div class="person">
+      ${label ? `<span class="tag">${escapeReportHtml(label)}</span>` : ''}
+      <strong>${escapeReportHtml(name || '-')}</strong>
+      <span>CPF: ${escapeReportHtml(cpf ? maskCpf(cpf) : '-')}</span>
+      <span>Telefone: ${escapeReportHtml(phone || '-')}</span>
+      <span>${escapeReportHtml(address || '-')}</span>
+    </div>
+  `;
+}
+
+function formatMicrochip(value) {
+  if (!value) return '-';
+  const raw = String(value).replace(/\s/g, '');
+  return raw.length > 15 ? `${raw.slice(0, 15)} ${raw.slice(15)}` : raw;
+}
+
+function escapeReportHtml(value) {
+  return String(value ?? '').replace(/[&<>"']/g, (char) => ({
+    '&': '&amp;',
+    '<': '&lt;',
+    '>': '&gt;',
+    '"': '&quot;',
+    "'": '&#39;'
+  }[char]));
+}
+
 function ReportsTab({ reports }) {
+  const [reportClinic, setReportClinic] = useState('');
+  const reportClinicOptions = useMemo(() => {
+    const names = new Set();
+    (reports?.perClinic || []).forEach((row) => {
+      if (row.clinic) names.add(row.clinic);
+    });
+    (reports?.appointmentDetails || []).forEach((row) => {
+      if (row.clinic) names.add(row.clinic);
+    });
+    return Array.from(names).sort((a, b) => a.localeCompare(b, 'pt-BR'));
+  }, [reports]);
+
   if (!reports?.totals) return <Loading label="Carregando relatórios" />;
 
   const { totals, perDay, perClinic, castrationsByClinic, castrationsByType, castrationsDetail = [] } = reports;
@@ -1554,9 +1846,23 @@ function ReportsTab({ reports }) {
 
       <div className="report-section-header">
         <h3 className="report-section-title"><BarChart2 size={18} /> Relatórios</h3>
-        <button className="button primary small" type="button" onClick={() => printReport(reports)}>
-          <Download size={15} /> Exportar PDF
-        </button>
+        <div className="report-actions">
+          <label className="report-clinic-filter">
+            <span>Clínica do relatório completo</span>
+            <select value={reportClinic} onChange={(event) => setReportClinic(event.target.value)}>
+              <option value="">Todas as clínicas</option>
+              {reportClinicOptions.map((clinic) => (
+                <option key={clinic} value={clinic}>{clinic}</option>
+              ))}
+            </select>
+          </label>
+          <button className="button primary small" type="button" onClick={() => printReport(reports)}>
+            <Download size={15} /> Exportar PDF
+          </button>
+          <button className="button secondary small" type="button" onClick={() => printCompleteReport(reports, reportClinic)}>
+            <Download size={15} /> Baixar relatório completo
+          </button>
+        </div>
       </div>
 
       {/* Totais gerais */}
