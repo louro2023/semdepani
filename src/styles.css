@@ -2964,7 +2964,14 @@ tr:last-child td {
   min-width: 240px;
 }
 
-.report-clinic-filter span {
+.report-date-filter {
+  display: grid;
+  gap: 5px;
+  width: 150px;
+}
+
+.report-clinic-filter span,
+.report-date-filter span {
   color: var(--muted);
   font-size: 0.78rem;
   font-weight: 700;
@@ -2980,6 +2987,28 @@ tr:last-child td {
   font: inherit;
   font-size: 0.86rem;
   padding: 6px 32px 6px 10px;
+}
+
+.report-date-filter .date-input-wrap {
+  width: 100%;
+}
+
+.report-date-filter .date-input-field {
+  min-height: 34px;
+  font-size: 0.86rem;
+  padding-block: 6px;
+}
+
+.report-date-filter .date-calendar-trigger {
+  min-height: 34px;
+}
+
+.report-filter-error {
+  flex-basis: 100%;
+  color: var(--danger);
+  font-size: 0.78rem;
+  font-weight: 700;
+  text-align: right;
 }
 
 .report-metrics {

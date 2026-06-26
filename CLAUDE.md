@@ -404,6 +404,7 @@ Comportamento:
 - A aba Admin > Relatorios possui o botao `Exportar PDF` com o resumo ja existente.
 - Ao lado dele existe `Baixar relatorio completo`, que abre uma versao de impressao para salvar em PDF ou imprimir.
 - O relatorio completo pode ser gerado para todas as clinicas ou para uma clinica especifica.
+- O relatorio completo permite definir periodo por data inicial e data final, no formato `DD/MM/AAAA`.
 - O relatorio completo usa `appointmentDetails` de `/api/admin/reports`.
 - Ele inclui status, data, horario, clinica, tutor, CPF, telefone, endereco completo do tutor, responsavel que levou o animal, telefone/endereco desse responsavel quando houver substituto, animal, tipo, raca, idade e microchip.
 - O layout do relatorio completo e configurado para A4 paisagem e inclui graficos por status, por clinica/data e por tipo de castracao realizada.

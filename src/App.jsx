@@ -1533,8 +1533,10 @@ function printReport(reports) {
   setTimeout(() => { win.print(); }, 400);
 }
 
-function printCompleteReport(reports, clinicFilter = '') {
-  const details = filterReportAppointments(reports?.appointmentDetails || [], clinicFilter);
+function printCompleteReport(reports, filters = {}) {
+  const clinicFilter = filters.clinic || '';
+  const period = normalizeReportPeriod(filters.startDate, filters.endDate);
+  const details = filterReportAppointments(reports?.appointmentDetails || [], clinicFilter, period);
   const date = new Date().toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit', year: 'numeric' });
   const dateTime = new Date().toLocaleString('pt-BR', {
     day: '2-digit',
@@ -1544,6 +1546,7 @@ function printCompleteReport(reports, clinicFilter = '') {
     minute: '2-digit'
   });
   const scopeLabel = clinicFilter || 'Todas as clínicas';
+  const periodLabel = getReportPeriodLabel(period);
   const totals = countAppointmentsByStatus(details);
   const statusRows = APPOINTMENT_STATUS_OPTIONS.map(([status, label]) => ({
     label,
@@ -1557,9 +1560,9 @@ function printCompleteReport(reports, clinicFilter = '') {
   );
   const dayRows = groupReportRows(
     details.filter((row) => row.status !== 'cancelado'),
-    (row) => formatDate(row.date),
+    (row) => row.date,
     { sortByLabel: true }
-  ).slice(0, 18);
+  ).map((row) => ({ ...row, label: formatDate(row.label) })).slice(0, 18);
 
   const detailRows = details.map((row) => {
     const tutorAddress = buildReportAddress(row.tutor_address, row.tutor_address_number, row.tutor_neighborhood, row.tutor_cep);
@@ -1588,7 +1591,7 @@ function printCompleteReport(reports, clinicFilter = '') {
   }).join('');
 
   const html = `<!DOCTYPE html><html lang="pt-BR"><head><meta charset="UTF-8">
-  <title>Relatório Completo - ${escapeReportHtml(scopeLabel)} - ${date}</title>
+  <title>Relatório Completo - ${escapeReportHtml(scopeLabel)} - ${escapeReportHtml(periodLabel)} - ${date}</title>
   <style>
     @page { size: A4 landscape; margin: 11mm; }
     * { box-sizing: border-box; }
@@ -1641,6 +1644,8 @@ function printCompleteReport(reports, clinicFilter = '') {
       <div class="scope">
         <p class="sub">Clínica selecionada</p>
         <strong>${escapeReportHtml(scopeLabel)}</strong>
+        <p class="sub" style="margin-top:8px;">Período</p>
+        <strong>${escapeReportHtml(periodLabel)}</strong>
       </div>
     </header>
 
@@ -1666,7 +1671,7 @@ function printCompleteReport(reports, clinicFilter = '') {
     <section class="print-break">
       <h2>Detalhamento completo</h2>
       ${details.length === 0
-        ? '<p class="empty">Nenhum agendamento encontrado para a clínica selecionada.</p>'
+        ? '<p class="empty">Nenhum agendamento encontrado para a clínica e período selecionados.</p>'
         : `<table>
             <colgroup>
               <col style="width:9%">
@@ -1702,9 +1707,37 @@ function printCompleteReport(reports, clinicFilter = '') {
   setTimeout(() => { win.print(); }, 500);
 }
 
-function filterReportAppointments(rows, clinicFilter) {
-  if (!clinicFilter) return rows;
-  return rows.filter((row) => row.clinic === clinicFilter);
+function normalizeReportPeriod(startDate = '', endDate = '') {
+  return {
+    start: toIsoDate(startDate),
+    end: toIsoDate(endDate)
+  };
+}
+
+function getReportPeriodLabel(period = {}) {
+  if (period.start && period.end) return `${formatDate(period.start)} até ${formatDate(period.end)}`;
+  if (period.start) return `A partir de ${formatDate(period.start)}`;
+  if (period.end) return `Até ${formatDate(period.end)}`;
+  return 'Todos os períodos';
+}
+
+function getReportPeriodError(startDate = '', endDate = '') {
+  const start = toIsoDate(startDate);
+  const end = toIsoDate(endDate);
+  if (startDate && !start) return 'Informe uma data inicial válida.';
+  if (endDate && !end) return 'Informe uma data final válida.';
+  if (start && end && end < start) return 'A data final deve ser igual ou posterior à data inicial.';
+  return '';
+}
+
+function filterReportAppointments(rows, clinicFilter, period = {}) {
+  return rows.filter((row) => {
+    if (clinicFilter && row.clinic !== clinicFilter) return false;
+    const rowDate = toIsoDate(row.date);
+    if (period.start && rowDate < period.start) return false;
+    if (period.end && rowDate > period.end) return false;
+    return true;
+  });
 }
 
 function countAppointmentsByStatus(rows) {
@@ -1815,6 +1848,8 @@ function escapeReportHtml(value) {
 
 function ReportsTab({ reports }) {
   const [reportClinic, setReportClinic] = useState('');
+  const [reportStartDate, setReportStartDate] = useState('');
+  const [reportEndDate, setReportEndDate] = useState('');
   const reportClinicOptions = useMemo(() => {
     const names = new Set();
     (reports?.perClinic || []).forEach((row) => {
@@ -1829,6 +1864,7 @@ function ReportsTab({ reports }) {
   if (!reports?.totals) return <Loading label="Carregando relatórios" />;
 
   const { totals, perDay, perClinic, castrationsByClinic, castrationsByType, castrationsDetail = [] } = reports;
+  const reportPeriodError = getReportPeriodError(reportStartDate, reportEndDate);
 
   function exportCsv(rows, headers, filename) {
     const lines = [headers.join(','), ...rows.map((r) => headers.map((h) => `"${formatCsvValue(r[h], h)}"`).join(','))];
@@ -1856,12 +1892,30 @@ function ReportsTab({ reports }) {
               ))}
             </select>
           </label>
+          <label className="report-date-filter">
+            <span>Data inicial</span>
+            <DateInput value={reportStartDate} onChange={setReportStartDate} />
+          </label>
+          <label className="report-date-filter">
+            <span>Data final</span>
+            <DateInput value={reportEndDate} onChange={setReportEndDate} />
+          </label>
           <button className="button primary small" type="button" onClick={() => printReport(reports)}>
             <Download size={15} /> Exportar PDF
           </button>
-          <button className="button secondary small" type="button" onClick={() => printCompleteReport(reports, reportClinic)}>
+          <button
+            className="button secondary small"
+            type="button"
+            onClick={() => printCompleteReport(reports, {
+              clinic: reportClinic,
+              startDate: reportStartDate,
+              endDate: reportEndDate
+            })}
+            disabled={Boolean(reportPeriodError)}
+          >
             <Download size={15} /> Baixar relatório completo
           </button>
+          {reportPeriodError ? <small className="report-filter-error">{reportPeriodError}</small> : null}
         </div>
       </div>
 
