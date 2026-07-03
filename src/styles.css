@@ -1407,6 +1407,36 @@ select:focus,
   color: var(--muted);
 }
 
+.appointment-actions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.responsible-lock-note {
+  margin-top: 4px;
+  font-size: 0.82rem;
+  font-weight: 700;
+  color: var(--danger) !important;
+}
+
+.responsible-edit-panel {
+  grid-column: 1 / -1;
+}
+
+.responsible-edit-hint {
+  margin: 0;
+  color: var(--muted);
+  font-size: 0.88rem;
+  line-height: 1.45;
+}
+
+.responsible-edit-actions {
+  justify-content: flex-end;
+}
+
 .status-badge {
   display: inline-flex;
   align-items: center;
@@ -1924,6 +1954,11 @@ tr:last-child td {
 
   .appointment-item {
     grid-template-columns: 1fr;
+  }
+
+  .appointment-actions,
+  .responsible-edit-actions {
+    justify-content: flex-start;
   }
 
   .how-steps {

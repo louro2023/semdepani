@@ -1106,6 +1106,7 @@ async function openDocument(userId, type, token) {
 function UserDashboard({ auth, setView }) {
   const [data, setData] = useState(null);
   const [error, setError] = useState('');
+  const [editingResponsibleId, setEditingResponsibleId] = useState(null);
 
   useEffect(() => {
     load();
@@ -1124,6 +1125,7 @@ function UserDashboard({ auth, setView }) {
     if (!confirm('Cancelar este agendamento? A vaga será liberada.')) return;
     try {
       await request(`/appointments/${id}/cancel`, { method: 'POST', body: {} }, auth.token);
+      setEditingResponsibleId(null);
       load();
     } catch (err) {
       setError(err.message);
@@ -1171,29 +1173,239 @@ function UserDashboard({ auth, setView }) {
         <CalendarPlus size={18} /> Agendar castração do animal
       </button>
       <div className="appointment-list">
-        {data.appointments.length ? data.appointments.map((appointment) => (
-          <article className="appointment-item" key={appointment.id}>
-            <div>
-              <strong>{appointment.animal_name}</strong>
-              <span>{appointment.animal_type_label} · {appointment.breed}</span>
-            </div>
-            <div>
-              <strong>{formatDate(appointment.date)} às {appointment.time}</strong>
-              <span>{appointment.clinic}</span>
-              {appointment.clinic_address ? <span>{appointment.clinic_address}</span> : null}
-              {appointment.substitute_responsible ? <span>Responsável: {appointment.responsible_name}</span> : null}
-            </div>
-            <StatusBadge status={appointment.status} label={appointment.status_label} />
-            {appointment.status === 'agendado' ? (
-              <button className="icon-only danger" type="button" onClick={() => cancel(appointment.id)} title="Cancelar">
-                <XCircle size={18} />
-              </button>
-            ) : null}
-          </article>
-        )) : <p className="muted">Nenhum agendamento encontrado.</p>}
+        {data.appointments.length ? data.appointments.map((appointment) => {
+          const canEditResponsible = appointment.can_update_responsible ?? canUpdateResponsibleInBrowser(appointment);
+          const isEditingResponsible = editingResponsibleId === appointment.id;
+          return (
+            <article className="appointment-item" key={appointment.id}>
+              <div>
+                <strong>{appointment.animal_name}</strong>
+                <span>{appointment.animal_type_label} · {appointment.breed}</span>
+              </div>
+              <div>
+                <strong>{formatDate(appointment.date)} às {appointment.time}</strong>
+                <span>{appointment.clinic}</span>
+                {appointment.clinic_address ? <span>{appointment.clinic_address}</span> : null}
+                <span>Responsável: {appointment.substitute_responsible ? appointment.responsible_name : 'Tutor principal'}</span>
+                {appointment.status === 'agendado' && !canEditResponsible ? (
+                  <span className="responsible-lock-note">Alteração do responsável encerrada.</span>
+                ) : null}
+              </div>
+              <StatusBadge status={appointment.status} label={appointment.status_label} />
+              <div className="appointment-actions">
+                {canEditResponsible ? (
+                  <button
+                    className="button ghost small"
+                    type="button"
+                    onClick={() => setEditingResponsibleId(isEditingResponsible ? null : appointment.id)}
+                    title="Editar responsável pelo atendimento"
+                  >
+                    <Edit3 size={16} />
+                    Responsável
+                  </button>
+                ) : null}
+                {appointment.status === 'agendado' ? (
+                  <button className="icon-only danger" type="button" onClick={() => cancel(appointment.id)} title="Cancelar">
+                    <XCircle size={18} />
+                  </button>
+                ) : null}
+              </div>
+              {isEditingResponsible ? (
+                <AppointmentResponsibleEditor
+                  appointment={appointment}
+                  auth={auth}
+                  onCancel={() => setEditingResponsibleId(null)}
+                  onSaved={() => {
+                    setEditingResponsibleId(null);
+                    load();
+                  }}
+                />
+              ) : null}
+            </article>
+          );
+        }) : <p className="muted">Nenhum agendamento encontrado.</p>}
       </div>
       {data.user.role === 'protetor' ? <ChangePasswordForm auth={auth} /> : null}
     </section>
+  );
+}
+
+function AppointmentResponsibleEditor({ appointment, auth, onCancel, onSaved }) {
+  const [form, setForm] = useState(() => responsibleFormFromAppointment(appointment));
+  const [cepLookup, setCepLookup] = useState({ loading: false, error: '', success: '' });
+  const [attempted, setAttempted] = useState(false);
+  const [error, setError] = useState('');
+  const [saving, setSaving] = useState(false);
+
+  const cepDigits = onlyDigits(form.cep);
+  const cpfError = form.enabled ? getCpfValidationMessage(form.cpf) : '';
+  const cepError = cepLookup.error || (attempted && form.enabled && cepDigits.length !== 8 ? 'Informe um CEP válido com 8 dígitos para o responsável substituto.' : '');
+  const showErrors = attempted && form.enabled;
+
+  useEffect(() => {
+    setForm(responsibleFormFromAppointment(appointment));
+    setCepLookup({ loading: false, error: '', success: '' });
+    setAttempted(false);
+    setError('');
+    setSaving(false);
+  }, [appointment.id]);
+
+  useEffect(() => {
+    if (!form.enabled) {
+      setCepLookup({ loading: false, error: '', success: '' });
+      return undefined;
+    }
+    if (cepDigits.length !== 8) {
+      setCepLookup({ loading: false, error: '', success: '' });
+      return undefined;
+    }
+
+    let cancelled = false;
+    setCepLookup({ loading: true, error: '', success: '' });
+    request(`/public/cep/${cepDigits}`)
+      .then((data) => {
+        if (cancelled) return;
+        setForm((current) => {
+          if (!current.enabled || onlyDigits(current.cep) !== cepDigits) return current;
+          return {
+            ...current,
+            address: data.address?.street || current.address,
+            neighborhood: data.address?.neighborhood || current.neighborhood
+          };
+        });
+        setCepLookup({ loading: false, error: '', success: 'Endereço encontrado em Nova Iguaçu.' });
+      })
+      .catch((err) => {
+        if (!cancelled) setCepLookup({ loading: false, error: err.message, success: '' });
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [cepDigits, form.enabled]);
+
+  function update(field, value) {
+    setForm((current) => ({ ...current, [field]: value }));
+    setError('');
+  }
+
+  function validate() {
+    if (!form.enabled) return '';
+    if (!form.name || !form.cep || !form.address || (!form.addressNumber && !form.addressNumberMissing) || !form.neighborhood || !form.phone) {
+      return 'Preencha todos os campos obrigatórios do responsável substituto.';
+    }
+    if (cpfError) return cpfError;
+    if (cepDigits.length !== 8) return 'Informe um CEP válido com 8 dígitos para o responsável substituto.';
+    if (cepLookup.loading) return 'Aguarde a consulta do CEP do responsável substituto para salvar.';
+    if (cepLookup.error) return cepLookup.error;
+    if (form.email && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(form.email)) return 'E-mail do responsável substituto inválido.';
+    if (!form.cityAdultConfirmed) return 'Confirme que o responsável substituto reside em Nova Iguaçu e é maior de 18 anos.';
+    return '';
+  }
+
+  async function handleSubmit(event) {
+    event.preventDefault();
+    setAttempted(true);
+    setError('');
+    const validation = validate();
+    if (validation) {
+      setError(validation);
+      return;
+    }
+    setSaving(true);
+    try {
+      await request(`/appointments/${appointment.id}/responsible`, {
+        method: 'PATCH',
+        body: { responsible: form }
+      }, auth.token);
+      setSaving(false);
+      onSaved();
+    } catch (err) {
+      setError(err.message);
+      setSaving(false);
+    }
+  }
+
+  return (
+    <form className="substitute-form responsible-edit-panel" onSubmit={handleSubmit}>
+      <div className="substitute-form-title">
+        <Users size={18} />
+        <strong>Responsável pelo atendimento</strong>
+      </div>
+      <p className="responsible-edit-hint">
+        A alteração só pode ser feita até 5 horas antes de {formatDate(appointment.date)} às {appointment.time}.
+      </p>
+      {error ? <InlineAlert message={error} /> : null}
+      <label className="check-row">
+        <input
+          type="checkbox"
+          checked={form.enabled}
+          onChange={(event) => update('enabled', event.target.checked)}
+        />
+        <span>Outra pessoa será responsável por levar o animal ao atendimento</span>
+      </label>
+      {form.enabled ? (
+        <div className="substitute-grid">
+          <TextField label="Nome completo" value={form.name} onChange={(value) => update('name', value)} required />
+          <TextField
+            label="CPF"
+            value={form.cpf}
+            onChange={(value) => update('cpf', onlyDigits(value).slice(0, CPF_DIGITS_LENGTH))}
+            inputMode="numeric"
+            maxLength={CPF_DIGITS_LENGTH}
+            hint={`Somente números, ${CPF_DIGITS_LENGTH} dígitos`}
+            error={showErrors ? cpfError : ''}
+            required
+          />
+          <TextField
+            label="CEP"
+            value={form.cep}
+            onChange={(value) => update('cep', onlyDigits(value).slice(0, 8))}
+            inputMode="numeric"
+            maxLength={8}
+            hint={cepLookup.loading ? 'Buscando endereço...' : cepLookup.success || 'Somente números, 8 dígitos'}
+            error={showErrors || cepLookup.error ? cepError : ''}
+            required
+          />
+          <TextField label="Endereço" value={form.address} onChange={(value) => update('address', value)} required />
+          <TextField label="Número da residência" value={form.addressNumber} onChange={(value) => update('addressNumber', value)} required={!form.addressNumberMissing} disabled={form.addressNumberMissing} />
+          <label className="check-row compact-check number-missing-row">
+            <input
+              type="checkbox"
+              checked={form.addressNumberMissing}
+              onChange={(event) => {
+                update('addressNumberMissing', event.target.checked);
+                if (event.target.checked) update('addressNumber', '');
+              }}
+            />
+            <span>Sem número</span>
+          </label>
+          <TextField label="Bairro" value={form.neighborhood} onChange={(value) => update('neighborhood', value)} required />
+          <TextField label="Telefone" value={form.phone} onChange={(value) => update('phone', value)} required />
+          <TextField label="E-mail" value={form.email} onChange={(value) => update('email', value)} type="email" hint="Use um e-mail de contato, se tiver" />
+          <label className="check-row span-2">
+            <input
+              type="checkbox"
+              checked={form.cityAdultConfirmed}
+              onChange={(event) => update('cityAdultConfirmed', event.target.checked)}
+            />
+            <span>O responsável substituto reside em Nova Iguaçu e é maior de 18 anos</span>
+          </label>
+        </div>
+      ) : (
+        <p className="muted responsible-edit-hint">Ao salvar sem substituto, o tutor principal volta a ser o responsável pelo atendimento.</p>
+      )}
+      <div className="form-actions responsible-edit-actions">
+        <button className="button ghost" type="button" onClick={onCancel} disabled={saving}>
+          <XCircle size={18} />
+          Cancelar
+        </button>
+        <button className="button primary" type="submit" disabled={saving || cepLookup.loading}>
+          <Save size={18} />
+          {saving ? 'Salvando...' : 'Salvar responsável'}
+        </button>
+      </div>
+    </form>
   );
 }
 
@@ -1243,6 +1455,7 @@ function ClinicPanel({ auth }) {
   const [clinics, setClinics] = useState([]);
   const [selectedClinicId, setSelectedClinicId] = useState('');
   const [selectedStatus, setSelectedStatus] = useState('');
+  const [selectedDate, setSelectedDate] = useState('');
   const [selectedMonth, setSelectedMonth] = useState('');
   const [tutorSearch, setTutorSearch] = useState('');
   const [error, setError] = useState('');
@@ -1251,13 +1464,15 @@ function ClinicPanel({ auth }) {
   const filteredAppointments = useMemo(
     () => {
       const search = normalizeSearch(tutorSearch);
+      const filterDate = toIsoDate(selectedDate);
       return appointments.filter((appointment) => (
         (!selectedStatus || appointment.status === selectedStatus) &&
+        (!filterDate || toIsoDate(appointment.date) === filterDate) &&
         (!selectedMonth || getDateMonth(appointment.date) === selectedMonth) &&
         (!search || normalizeSearch(appointment.user_name || '').includes(search))
       ));
     },
-    [appointments, selectedStatus, selectedMonth, tutorSearch]
+    [appointments, selectedStatus, selectedDate, selectedMonth, tutorSearch]
   );
 
   async function loadAppointments(showLoading = true) {
@@ -1297,11 +1512,11 @@ function ClinicPanel({ auth }) {
       <div className="section-title">
         <span className="eyebrow">{isAdmin ? 'Admin · Clínica' : 'Clínica'}</span>
         <h2>Agendamentos</h2>
-        {isAdmin ? <p>Escolha uma clínica, status, mês e tutor para visualizar os agendamentos, ou mantenha os filtros em branco.</p> : null}
+        <p>{isAdmin ? 'Escolha uma clínica, status, data, mês e tutor para visualizar os agendamentos, ou mantenha os filtros em branco.' : 'Filtre por status, data, mês ou tutor para localizar os agendamentos da clínica.'}</p>
       </div>
       {error ? <InlineAlert message={error} /> : null}
-      {isAdmin ? (
-        <div className="clinic-selector-bar">
+      <div className="clinic-selector-bar">
+        {isAdmin ? (
           <label className="field">
             <span>Clínica</span>
             <select value={selectedClinicId} onChange={(event) => setSelectedClinicId(event.target.value)}>
@@ -1311,35 +1526,36 @@ function ClinicPanel({ auth }) {
               ))}
             </select>
           </label>
-          <label className="field">
-            <span>Status</span>
-            <select value={selectedStatus} onChange={(event) => setSelectedStatus(event.target.value)}>
-              <option value="">Todos os status</option>
-              {APPOINTMENT_STATUS_OPTIONS.map(([value, label]) => (
-                <option key={value} value={value}>{label}</option>
-              ))}
-            </select>
-          </label>
-          <label className="field">
-            <span>Mês</span>
-            <select value={selectedMonth} onChange={(event) => setSelectedMonth(event.target.value)}>
-              <option value="">Todos os meses</option>
-              {MONTH_FILTER_OPTIONS.map(([value, label]) => (
-                <option key={value} value={value}>{label}</option>
-              ))}
-            </select>
-          </label>
-          <TextField label="Tutor" value={tutorSearch} onChange={setTutorSearch} />
-          <button className="button ghost" type="button" onClick={() => { setSelectedClinicId(''); setSelectedStatus(''); setSelectedMonth(''); setTutorSearch(''); }}>
-            Limpar filtros
-          </button>
-          <span className="filter-count">
-            {filteredAppointments.length === appointments.length
-              ? `${appointments.length} agendamento${appointments.length !== 1 ? 's' : ''}`
-              : `${filteredAppointments.length} de ${appointments.length} agendamentos`}
-          </span>
-        </div>
-      ) : null}
+        ) : null}
+        <label className="field">
+          <span>Status</span>
+          <select value={selectedStatus} onChange={(event) => setSelectedStatus(event.target.value)}>
+            <option value="">Todos os status</option>
+            {APPOINTMENT_STATUS_OPTIONS.map(([value, label]) => (
+              <option key={value} value={value}>{label}</option>
+            ))}
+          </select>
+        </label>
+        <DateField label="Data" value={selectedDate} onChange={setSelectedDate} />
+        <label className="field">
+          <span>Mês</span>
+          <select value={selectedMonth} onChange={(event) => setSelectedMonth(event.target.value)}>
+            <option value="">Todos os meses</option>
+            {MONTH_FILTER_OPTIONS.map(([value, label]) => (
+              <option key={value} value={value}>{label}</option>
+            ))}
+          </select>
+        </label>
+        <TextField label="Tutor" value={tutorSearch} onChange={setTutorSearch} />
+        <button className="button ghost" type="button" onClick={() => { setSelectedClinicId(''); setSelectedStatus(''); setSelectedDate(''); setSelectedMonth(''); setTutorSearch(''); }}>
+          Limpar filtros
+        </button>
+        <span className="filter-count">
+          {filteredAppointments.length === appointments.length
+            ? `${appointments.length} agendamento${appointments.length !== 1 ? 's' : ''}`
+            : `${filteredAppointments.length} de ${appointments.length} agendamentos`}
+        </span>
+      </div>
       {loading ? <Loading label="Carregando agendamentos" /> : (
         <AppointmentsTab appointments={filteredAppointments} reload={() => loadAppointments(false)} auth={auth} />
       )}
@@ -3783,6 +3999,32 @@ function addMonthToDate(value) {
   const nextMonth = String(date.getMonth() + 1).padStart(2, '0');
   const nextDay = String(date.getDate()).padStart(2, '0');
   return `${nextYear}-${nextMonth}-${nextDay}`;
+}
+
+function responsibleFormFromAppointment(appointment = {}) {
+  if (!appointment.substitute_responsible) return { ...emptyResponsible };
+  const addressNumberMissing = appointment.responsible_address_number === 'S/N';
+  return {
+    enabled: true,
+    name: appointment.responsible_name || '',
+    cpf: appointment.responsible_cpf || '',
+    cep: appointment.responsible_cep || '',
+    address: appointment.responsible_address || '',
+    addressNumber: addressNumberMissing ? '' : appointment.responsible_address_number || '',
+    addressNumberMissing,
+    neighborhood: appointment.responsible_neighborhood || '',
+    phone: appointment.responsible_phone || '',
+    email: appointment.responsible_email || '',
+    cityAdultConfirmed: Boolean(appointment.responsible_city_confirmed && appointment.responsible_adult_confirmed)
+  };
+}
+
+function canUpdateResponsibleInBrowser(appointment = {}) {
+  if (appointment.status !== 'agendado' || !appointment.date || !appointment.time) return false;
+  const minHours = Number(appointment.responsible_update_min_hours || 5);
+  const startsAt = new Date(`${appointment.date}T${appointment.time}:00`);
+  if (Number.isNaN(startsAt.getTime())) return false;
+  return startsAt.getTime() - Date.now() >= minHours * 60 * 60 * 1000;
 }
 
 function maskCpf(value = '') {

@@ -48,6 +48,7 @@ const ROLE_LIMITS = {
   protetor: 4,
   clinica: 0
 };
+const RESPONSIBLE_UPDATE_MIN_HOURS = 5;
 
 const docUpload = multer({
   storage: multer.diskStorage({
@@ -269,7 +270,7 @@ app.get('/api/me', requireAuth, (req, res) => {
     user: publicUser(user),
     limit: getAppointmentLimit(user.role),
     currentMonthUsed: getCurrentMonthUsage(user.id),
-    appointments: listAppointments({ userId: user.id })
+    appointments: listAppointments({ userId: user.id }).map(addResponsibleEditInfo)
   });
 });
 
@@ -373,6 +374,58 @@ app.post('/api/appointments/:id/cancel', requireAuth, (req, res) => {
     if (appointment.status !== 'agendado') throw httpError(400, 'Somente agendamentos em aberto podem ser cancelados.');
     changeAppointmentStatus(appointment.id, 'cancelado', req.body.reason || 'Cancelado pelo usuário.');
     res.json({ appointment: getAppointmentDetails(appointment.id) });
+  } catch (error) {
+    sendError(res, error);
+  }
+});
+
+app.patch('/api/appointments/:id/responsible', requireAuth, async (req, res) => {
+  try {
+    const appointment = db.prepare(`
+      SELECT a.*, s.date, s.time
+      FROM appointments a
+      JOIN slots s ON s.id = a.slot_id
+      WHERE a.id = ?
+    `).get(req.params.id);
+    if (!appointment) throw httpError(404, 'Agendamento nÃ£o encontrado.');
+    if (!['tutor', 'protetor', 'admin'].includes(req.user.role)) throw httpError(403, 'OperaÃ§Ã£o nÃ£o permitida para este perfil.');
+    if (req.user.role !== 'admin' && appointment.user_id !== req.user.id) throw httpError(403, 'Acesso negado.');
+    if (appointment.status !== 'agendado') throw httpError(400, 'Somente agendamentos em aberto permitem alterar o responsavel.');
+    if (!canUpdateAppointmentResponsible(appointment, RESPONSIBLE_UPDATE_MIN_HOURS)) {
+      throw httpError(400, `O responsavel pelo atendimento so pode ser alterado com pelo menos ${RESPONSIBLE_UPDATE_MIN_HOURS} horas de antecedencia.`);
+    }
+
+    const responsible = await parseSubstituteResponsible(req.body.responsible || req.body.substituteResponsible || req.body);
+    db.prepare(`
+      UPDATE appointments
+      SET substitute_responsible = ?,
+          responsible_name = ?,
+          responsible_cpf = ?,
+          responsible_cep = ?,
+          responsible_address = ?,
+          responsible_address_number = ?,
+          responsible_neighborhood = ?,
+          responsible_phone = ?,
+          responsible_email = ?,
+          responsible_city_confirmed = ?,
+          responsible_adult_confirmed = ?,
+          updated_at = CURRENT_TIMESTAMP
+      WHERE id = ?
+    `).run(
+      responsible.substitute_responsible,
+      responsible.name,
+      responsible.cpf,
+      responsible.cep,
+      responsible.address,
+      responsible.address_number,
+      responsible.neighborhood,
+      responsible.phone,
+      responsible.email,
+      responsible.city_confirmed,
+      responsible.adult_confirmed,
+      appointment.id
+    );
+    res.json({ appointment: addResponsibleEditInfo(getAppointmentDetails(appointment.id)) });
   } catch (error) {
     sendError(res, error);
   }
@@ -1432,6 +1485,22 @@ function getAppointmentDetails(id) {
   const [appointment] = listAppointments({ appointmentId: id });
   if (!appointment) throw httpError(404, 'Agendamento não encontrado.');
   return appointment;
+}
+
+function canUpdateAppointmentResponsible(appointment, minHours = RESPONSIBLE_UPDATE_MIN_HOURS) {
+  if (!appointment || appointment.status !== 'agendado') return false;
+  const result = db.prepare(`
+    SELECT datetime(? || ' ' || ?) >= datetime('now', 'localtime', ?) AS allowed
+  `).get(appointment.date, appointment.time, `+${minHours} hours`);
+  return Boolean(result?.allowed);
+}
+
+function addResponsibleEditInfo(appointment) {
+  return {
+    ...appointment,
+    can_update_responsible: canUpdateAppointmentResponsible(appointment, RESPONSIBLE_UPDATE_MIN_HOURS),
+    responsible_update_min_hours: RESPONSIBLE_UPDATE_MIN_HOURS
+  };
 }
 
 function assertCanManageAppointment(user, appointmentId) {
