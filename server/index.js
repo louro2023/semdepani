@@ -42,7 +42,6 @@ const smtpTransporter = process.env.SMTP_HOST
 if (!process.env.JWT_SECRET) throw new Error('JWT_SECRET env var obrigatório. Em dev, adicione ao .env: JWT_SECRET=dev-secret-local');
 const JWT_SECRET = process.env.JWT_SECRET;
 const PORT = Number(process.env.PORT || 4000);
-const PUBLIC_SLOTS_RELEASE_NOW_KEY = 'public_slots_release_now';
 const ROLE_LIMITS = {
   tutor: 1,
   protetor: 4,
@@ -674,6 +673,46 @@ app.post('/api/admin/slots/release-now', requireAdmin, (req, res) => {
   const enabled = req.body.enabled === true || req.body.enabled === 1 || req.body.enabled === '1' || req.body.enabled === 'true';
   setPublicSlotsReleaseNowEnabled(enabled);
   res.json({ enabled });
+});
+
+app.get('/api/admin/slots/releases', requireAdmin, (_req, res) => {
+  res.json({ releases: listSlotMonthReleases() });
+});
+
+app.put('/api/admin/slots/releases/:month', requireAdmin, (req, res) => {
+  try {
+    const month = normalizeReleaseMonth(req.params.month);
+    const action = String(req.body.action || '').trim().toLowerCase();
+    const slotCount = db.prepare('SELECT COUNT(*) AS total FROM slots WHERE substr(date, 1, 7) = ?').get(month).total;
+    if (!slotCount) throw httpError(404, 'Não existem vagas cadastradas para este mês.');
+
+    if (action === 'hidden') {
+      db.prepare('DELETE FROM slot_release_months WHERE month = ?').run(month);
+    } else {
+      let releaseAt;
+      if (action === 'now') {
+        releaseAt = db.prepare("SELECT datetime('now', 'localtime') AS value").get().value;
+      } else if (action === 'scheduled') {
+        releaseAt = normalizeReleaseDateTime(req.body.releaseAt);
+        const isFuture = db.prepare("SELECT datetime(?) > datetime('now', 'localtime') AS valid").get(releaseAt).valid;
+        if (!isFuture) throw httpError(400, 'Escolha uma data e horário futuros para a publicação.');
+      } else {
+        throw httpError(400, 'Ação de publicação inválida.');
+      }
+
+      db.prepare(`
+        INSERT INTO slot_release_months (month, release_at)
+        VALUES (?, ?)
+        ON CONFLICT(month) DO UPDATE SET
+          release_at = excluded.release_at,
+          updated_at = CURRENT_TIMESTAMP
+      `).run(month, releaseAt);
+    }
+
+    res.json({ release: getSlotMonthRelease(month) });
+  } catch (error) {
+    sendError(res, error);
+  }
 });
 
 app.get('/api/admin/slots', requireAdmin, (_req, res) => {
@@ -1656,15 +1695,93 @@ function optionalAuth(req, _res, next) {
 }
 
 function publicSlotsReleaseNowEnabled() {
-  return db.prepare('SELECT value FROM settings WHERE key = ?').get(PUBLIC_SLOTS_RELEASE_NOW_KEY)?.value === '1';
+  return Boolean(db.prepare(`
+    SELECT 1
+    FROM slot_release_months
+    WHERE datetime(release_at) <= datetime('now', 'localtime')
+    LIMIT 1
+  `).get());
 }
 
 function setPublicSlotsReleaseNowEnabled(enabled) {
+  if (!enabled) {
+    db.prepare('DELETE FROM slot_release_months').run();
+    return;
+  }
   db.prepare(`
-    INSERT INTO settings (key, value)
-    VALUES (?, ?)
-    ON CONFLICT(key) DO UPDATE SET value = excluded.value
-  `).run(PUBLIC_SLOTS_RELEASE_NOW_KEY, enabled ? '1' : '0');
+    INSERT INTO slot_release_months (month, release_at)
+    SELECT DISTINCT substr(date, 1, 7), datetime('now', 'localtime')
+    FROM slots
+    WHERE 1 = 1
+    ON CONFLICT(month) DO UPDATE SET
+      release_at = excluded.release_at,
+      updated_at = CURRENT_TIMESTAMP
+  `).run();
+}
+
+function listSlotMonthReleases() {
+  return db.prepare(`
+    SELECT
+      months.month,
+      COUNT(s.id) AS slot_rows,
+      COALESCE(SUM(s.total_quantity), 0) AS total_quantity,
+      COALESCE(SUM(s.occupied_quantity), 0) AS occupied_quantity,
+      r.release_at
+    FROM (
+      SELECT DISTINCT substr(date, 1, 7) AS month
+      FROM slots
+      WHERE date GLOB '[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]'
+    ) months
+    LEFT JOIN slots s ON substr(s.date, 1, 7) = months.month
+    LEFT JOIN slot_release_months r ON r.month = months.month
+    GROUP BY months.month, r.release_at
+    ORDER BY months.month ASC
+  `).all().map(formatSlotMonthRelease);
+}
+
+function getSlotMonthRelease(month) {
+  const release = listSlotMonthReleases().find((item) => item.month === month);
+  if (!release) throw httpError(404, 'Não existem vagas cadastradas para este mês.');
+  return release;
+}
+
+function formatSlotMonthRelease(row) {
+  let status = 'hidden';
+  if (row.release_at) {
+    const published = db.prepare("SELECT datetime(?) <= datetime('now', 'localtime') AS value").get(row.release_at).value;
+    status = published ? 'public' : 'scheduled';
+  }
+  return {
+    ...row,
+    slot_rows: Number(row.slot_rows || 0),
+    total_quantity: Number(row.total_quantity || 0),
+    occupied_quantity: Number(row.occupied_quantity || 0),
+    status
+  };
+}
+
+function normalizeReleaseMonth(value = '') {
+  const month = String(value).trim();
+  const match = month.match(/^(\d{4})-(\d{2})$/);
+  if (!match || Number(match[2]) < 1 || Number(match[2]) > 12) {
+    throw httpError(400, 'Mês de publicação inválido.');
+  }
+  return month;
+}
+
+function normalizeReleaseDateTime(value = '') {
+  const raw = String(value).trim();
+  const match = raw.match(/^(\d{4})-(\d{2})-(\d{2})[T ](\d{2}):(\d{2})(?::(\d{2}))?$/);
+  if (!match) throw httpError(400, 'Informe a data e o horário da publicação.');
+  const [, year, month, day, hour, minute, second = '00'] = match;
+  const date = new Date(Number(year), Number(month) - 1, Number(day), Number(hour), Number(minute), Number(second));
+  if (
+    date.getFullYear() !== Number(year) || date.getMonth() !== Number(month) - 1 || date.getDate() !== Number(day) ||
+    date.getHours() !== Number(hour) || date.getMinutes() !== Number(minute) || Number(second) > 59
+  ) {
+    throw httpError(400, 'Data ou horário de publicação inválido.');
+  }
+  return `${year}-${month}-${day} ${hour}:${minute}:${second}`;
 }
 
 function slotAvailabilityDateGuard(user, alias = '') {
@@ -1674,13 +1791,16 @@ function slotAvailabilityDateGuard(user, alias = '') {
   if (user?.role === 'admin') {
     return `AND ${dateField} >= date('now', 'localtime')`;
   }
-  if (publicSlotsReleaseNowEnabled()) {
-    return `
-        AND ${dateField} >= date('now', 'localtime')
-        AND datetime(${dateField} || ' ' || ${timeField}) >= datetime('now', 'localtime', '+8 hours')
-      `;
-  }
-  return 'AND 1 = 0';
+  return `
+      AND ${dateField} >= date('now', 'localtime')
+      AND datetime(${dateField} || ' ' || ${timeField}) >= datetime('now', 'localtime', '+8 hours')
+      AND EXISTS (
+        SELECT 1
+        FROM slot_release_months release_month
+        WHERE release_month.month = substr(${dateField}, 1, 7)
+          AND datetime(release_month.release_at) <= datetime('now', 'localtime')
+      )
+    `;
 }
 
 function requireAuth(req, res, next) {

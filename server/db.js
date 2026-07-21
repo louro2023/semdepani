@@ -124,6 +124,13 @@ export function initSchema() {
       key TEXT PRIMARY KEY,
       value TEXT NOT NULL
     );
+
+    CREATE TABLE IF NOT EXISTS slot_release_months (
+      month TEXT PRIMARY KEY,
+      release_at TEXT NOT NULL,
+      created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+    );
   `);
 
   migrateUsersForClinicRole();
@@ -148,6 +155,7 @@ export function initSchema() {
   ensureColumn('appointments', 'responsible_city_confirmed', 'INTEGER NOT NULL DEFAULT 0');
   ensureColumn('appointments', 'responsible_adult_confirmed', 'INTEGER NOT NULL DEFAULT 0');
   db.exec(`CREATE UNIQUE INDEX IF NOT EXISTS idx_appointments_microchip ON appointments(microchip) WHERE microchip IS NOT NULL`);
+  migrateGlobalSlotReleaseToMonths();
 }
 
 export async function seedDatabase() {
@@ -162,6 +170,29 @@ function ensureColumn(table, column, definition) {
   const columns = db.prepare(`PRAGMA table_info(${table})`).all();
   if (!columns.some((item) => item.name === column)) {
     db.exec(`ALTER TABLE ${table} ADD COLUMN ${column} ${definition}`);
+  }
+}
+
+function migrateGlobalSlotReleaseToMonths() {
+  const migrationKey = 'monthly_slots_release_migrated';
+  if (db.prepare('SELECT 1 FROM settings WHERE key = ?').get(migrationKey)) return;
+
+  db.exec('BEGIN IMMEDIATE');
+  try {
+    const globalReleaseEnabled = db.prepare("SELECT value FROM settings WHERE key = 'public_slots_release_now'").get()?.value === '1';
+    if (globalReleaseEnabled) {
+      db.prepare(`
+        INSERT OR IGNORE INTO slot_release_months (month, release_at)
+        SELECT DISTINCT substr(date, 1, 7), datetime('now', 'localtime')
+        FROM slots
+        WHERE date GLOB '[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]'
+      `).run();
+    }
+    db.prepare('INSERT INTO settings (key, value) VALUES (?, ?)').run(migrationKey, '1');
+    db.exec('COMMIT');
+  } catch (error) {
+    db.exec('ROLLBACK');
+    throw error;
   }
 }
 

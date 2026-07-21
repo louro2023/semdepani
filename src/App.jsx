@@ -811,7 +811,7 @@ function Wizard({ auth, onDone }) {
                     </span>
                   </div>
                   {[
-                    'Chegue no horário informado e permaneça na clínica durante todo o procedimento. O responsável deve estar preparado para transportar o animal sonolento após a cirurgia.',
+                    'Compareça à clínica a partir do horário agendado. O atendimento será realizado por ordem de chegada entre os animais agendados para o mesmo horário. O responsável deve permanecer na clínica durante todo o procedimento e estar preparado para transportar o animal, que poderá estar sonolento após a cirurgia.',
                     'Cães: coleira, guia e focinheira (se necessário). Gatos: 1 por caixa de transporte.',
                     'Banho no dia anterior ao procedimento, sem pulgas ou carrapatos.',
                     'Idade mínima de 6 meses e máxima de 7 anos.',
@@ -2611,8 +2611,10 @@ function SlotsTab({ slots, clinics, reload, auth }) {
   const [selectedIds, setSelectedIds] = useState(new Set());
   const [renewRows, setRenewRows] = useState(null);
   const [renewError, setRenewError] = useState('');
-  const [releaseNowEnabled, setReleaseNowEnabled] = useState(false);
-  const [releaseNowLoading, setReleaseNowLoading] = useState(false);
+  const [monthReleases, setMonthReleases] = useState([]);
+  const [releaseLoadingMonth, setReleaseLoadingMonth] = useState('');
+  const [schedulingMonth, setSchedulingMonth] = useState('');
+  const [scheduledReleaseAt, setScheduledReleaseAt] = useState('');
   const [page, setPage] = useState(1);
 
   const clinicOptions = useMemo(() => clinics.filter((clinic) => clinic.active), [clinics]);
@@ -2626,7 +2628,7 @@ function SlotsTab({ slots, clinics, reload, auth }) {
       return (
         (!filters.clinic_id || String(slot.clinic_id) === filters.clinic_id) &&
         (!filterDate || toIsoDate(slot.date) === filterDate) &&
-        (!filters.month || getDateMonth(slot.date) === filters.month) &&
+        (!filters.month || toIsoDate(slot.date).slice(0, 7) === filters.month) &&
         (!filters.type || type === filters.type) &&
         (!filters.status || status === filters.status)
       );
@@ -2641,17 +2643,20 @@ function SlotsTab({ slots, clinics, reload, auth }) {
 
   useEffect(() => {
     let cancelled = false;
-    request('/admin/slots/release-now', {}, auth.token)
+    const loadReleases = () => request('/admin/slots/releases', {}, auth.token)
       .then((data) => {
-        if (!cancelled) setReleaseNowEnabled(Boolean(data.enabled));
+        if (!cancelled) setMonthReleases(data.releases || []);
       })
       .catch((err) => {
         if (!cancelled) setError(err.message);
       });
+    loadReleases();
+    const timer = setInterval(loadReleases, 60_000);
     return () => {
       cancelled = true;
+      clearInterval(timer);
     };
-  }, [auth.token]);
+  }, [auth.token, slots]);
 
   const speciesSummary = useMemo(() => {
     const map = {};
@@ -2814,20 +2819,38 @@ function SlotsTab({ slots, clinics, reload, auth }) {
     reload();
   }
 
-  async function toggleReleaseNow() {
-    setReleaseNowLoading(true);
+  async function updateMonthRelease(month, action, releaseAt = '') {
+    if (action === 'hidden' && !confirm(`Ocultar do público todas as vagas de ${formatMonthYear(month)}?`)) return;
+    setReleaseLoadingMonth(month);
     setError('');
     try {
-      const data = await request('/admin/slots/release-now', {
-        method: 'POST',
-        body: { enabled: !releaseNowEnabled }
+      const data = await request(`/admin/slots/releases/${month}`, {
+        method: 'PUT',
+        body: { action, releaseAt }
       }, auth.token);
-      setReleaseNowEnabled(Boolean(data.enabled));
+      setMonthReleases((current) => current.map((item) => (
+        item.month === month ? data.release : item
+      )));
+      setSchedulingMonth('');
+      setScheduledReleaseAt('');
     } catch (err) {
       setError(err.message);
     } finally {
-      setReleaseNowLoading(false);
+      setReleaseLoadingMonth('');
     }
+  }
+
+  function openReleaseSchedule(month) {
+    const current = monthReleases.find((item) => item.month === month);
+    setSchedulingMonth(month);
+    setScheduledReleaseAt(current?.status === 'scheduled' && current.release_at
+      ? current.release_at.replace(' ', 'T').slice(0, 16)
+      : getDefaultScheduleDateTime());
+  }
+
+  function submitReleaseSchedule(event, month) {
+    event.preventDefault();
+    updateMonthRelease(month, 'scheduled', scheduledReleaseAt);
   }
 
   if (renewRows) {
@@ -2942,6 +2965,85 @@ function SlotsTab({ slots, clinics, reload, auth }) {
         </label>
         <button className="button primary" type="submit"><Save size={18} /> {editing ? 'Salvar' : 'Criar vaga'}</button>
       </form>
+      <section className="month-release-panel" aria-labelledby="month-release-title">
+        <div className="month-release-heading">
+          <div>
+            <span className="eyebrow">Visibilidade pública</span>
+            <h3 id="month-release-title">Publicação das vagas por mês</h3>
+            <p>Defina separadamente quando as vagas de cada mês poderão ser vistas e agendadas pelo público.</p>
+          </div>
+          <div className="month-release-legend" aria-label="Legenda dos estados">
+            <span className="month-release-status public">Visível</span>
+            <span className="month-release-status scheduled">Agendado</span>
+            <span className="month-release-status hidden">Oculto</span>
+          </div>
+        </div>
+        {monthReleases.length ? (
+          <div className="month-release-grid">
+            {monthReleases.map((release) => {
+              const isLoading = releaseLoadingMonth === release.month;
+              return (
+                <article className={`month-release-card ${release.status}`} key={release.month}>
+                  <div className="month-release-card-top">
+                    <div>
+                      <strong>{formatMonthYear(release.month)}</strong>
+                      <span>{release.total_quantity} vagas em {release.slot_rows} linhas</span>
+                    </div>
+                    <span className={`month-release-status ${release.status}`}>
+                      {release.status === 'public' ? 'Visível ao público' : release.status === 'scheduled' ? 'Publicação agendada' : 'Oculto do público'}
+                    </span>
+                  </div>
+                  <p className="month-release-description">
+                    {release.status === 'public'
+                      ? `Publicado em ${formatReleaseDateTime(release.release_at)}.`
+                      : release.status === 'scheduled'
+                        ? `Será publicado automaticamente em ${formatReleaseDateTime(release.release_at)}.`
+                        : 'As vagas deste mês ainda não aparecem para tutores e protetores.'}
+                  </p>
+                  {schedulingMonth === release.month ? (
+                    <form className="month-release-schedule" onSubmit={(event) => submitReleaseSchedule(event, release.month)}>
+                      <label className="field">
+                        <span>Data e horário da publicação</span>
+                        <input
+                          type="datetime-local"
+                          value={scheduledReleaseAt}
+                          min={getMinimumScheduleDateTime()}
+                          onChange={(event) => setScheduledReleaseAt(event.target.value)}
+                          required
+                        />
+                      </label>
+                      <div className="month-release-schedule-actions">
+                        <button className="button ghost small" type="button" onClick={() => { setSchedulingMonth(''); setScheduledReleaseAt(''); }}>Cancelar</button>
+                        <button className="button primary small" type="submit" disabled={isLoading}>
+                          <Calendar size={16} /> Salvar agendamento
+                        </button>
+                      </div>
+                    </form>
+                  ) : (
+                    <div className="month-release-actions">
+                      {release.status !== 'public' ? (
+                        <button className="button primary small" type="button" onClick={() => updateMonthRelease(release.month, 'now')} disabled={isLoading}>
+                          <Eye size={16} /> Publicar agora
+                        </button>
+                      ) : null}
+                      <button className="button ghost small" type="button" onClick={() => openReleaseSchedule(release.month)} disabled={isLoading}>
+                        <Calendar size={16} /> {release.status === 'scheduled' ? 'Alterar agendamento' : 'Agendar publicação'}
+                      </button>
+                      {release.status !== 'hidden' ? (
+                        <button className="button danger subtle small" type="button" onClick={() => updateMonthRelease(release.month, 'hidden')} disabled={isLoading}>
+                          <XCircle size={16} /> Ocultar mês
+                        </button>
+                      ) : null}
+                    </div>
+                  )}
+                </article>
+              );
+            })}
+          </div>
+        ) : (
+          <p className="month-release-empty">Cadastre vagas para visualizar os controles mensais de publicação.</p>
+        )}
+      </section>
       <div className="filter-bar slots-filter-bar" aria-label="Filtros de vagas">
         <label className="field">
           <span>Clínica</span>
@@ -2955,8 +3057,8 @@ function SlotsTab({ slots, clinics, reload, auth }) {
           <span>Mês</span>
           <select value={filters.month} onChange={(event) => setFilters({ ...filters, month: event.target.value })}>
             <option value="">Todos</option>
-            {MONTH_FILTER_OPTIONS.map(([value, label]) => (
-              <option key={value} value={value}>{label}</option>
+            {monthReleases.map((release) => (
+              <option key={release.month} value={release.month}>{formatMonthYear(release.month)}</option>
             ))}
           </select>
         </label>
@@ -2998,22 +3100,6 @@ function SlotsTab({ slots, clinics, reload, auth }) {
         </div>
       )}
       <div className="slots-toolbar">
-        <button
-          className={`button release-now-button ${releaseNowEnabled ? 'active' : 'primary'}`}
-          type="button"
-          onClick={toggleReleaseNow}
-          disabled={releaseNowLoading}
-        >
-          {releaseNowEnabled ? <CheckCircle2 size={18} /> : <CalendarPlus size={18} />}
-          {releaseNowLoading
-            ? 'Atualizando...'
-            : releaseNowEnabled
-              ? 'Ocultar Vagas do Público'
-              : 'Disponibilizar Vagas Agora'}
-        </button>
-        <span className={`release-now-badge ${releaseNowEnabled ? 'active' : 'inactive'}`}>
-          {releaseNowEnabled ? 'Vagas visíveis ao público' : 'Vagas ocultas do público'}
-        </span>
         <button className="button ghost" type="button" onClick={toggleSelectAll}>
           {allSelected ? 'Desmarcar Todas' : 'Selecionar Todas'}
         </button>
@@ -3912,6 +3998,40 @@ function formatDate(value) {
   if (!iso) return value;
   const [year, month, day] = iso.split('-');
   return `${day}/${month}/${year}`;
+}
+
+function formatMonthYear(value = '') {
+  const match = String(value).match(/^(\d{4})-(\d{2})$/);
+  if (!match) return value || '-';
+  return capitalize(new Date(Number(match[1]), Number(match[2]) - 1, 1).toLocaleDateString('pt-BR', {
+    month: 'long',
+    year: 'numeric'
+  }));
+}
+
+function formatReleaseDateTime(value = '') {
+  const match = String(value).match(/^(\d{4})-(\d{2})-(\d{2})[ T](\d{2}):(\d{2})/);
+  if (!match) return value || '-';
+  return `${match[3]}/${match[2]}/${match[1]} às ${match[4]}:${match[5]}`;
+}
+
+function toLocalDateTimeInput(date) {
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, '0');
+  const day = String(date.getDate()).padStart(2, '0');
+  const hour = String(date.getHours()).padStart(2, '0');
+  const minute = String(date.getMinutes()).padStart(2, '0');
+  return `${year}-${month}-${day}T${hour}:${minute}`;
+}
+
+function getMinimumScheduleDateTime() {
+  return toLocalDateTimeInput(new Date(Date.now() + 60_000));
+}
+
+function getDefaultScheduleDateTime() {
+  const date = new Date(Date.now() + 60 * 60 * 1000);
+  date.setMinutes(Math.ceil(date.getMinutes() / 5) * 5, 0, 0);
+  return toLocalDateTimeInput(date);
 }
 
 function formatDateForInput(value) {
