@@ -1735,6 +1735,13 @@ select:focus,
   border-top: 1px solid var(--line);
 }
 
+.month-release-schedule-fields {
+  display: grid;
+  grid-template-columns: minmax(180px, 1.2fr) minmax(150px, 0.8fr);
+  gap: 10px;
+  align-items: start;
+}
+
 .month-release-schedule .field {
   gap: 5px;
 }
@@ -1763,6 +1770,10 @@ select:focus,
   }
 
   .month-release-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .month-release-schedule-fields {
     grid-template-columns: 1fr;
   }
 
@@ -2752,6 +2763,15 @@ tr:last-child td {
   margin-top: 2px;
 }
 
+.responsible-deadline-notice {
+  background: rgba(8, 119, 107, 0.08);
+  border-color: rgba(8, 119, 107, 0.25);
+}
+
+.responsible-deadline-notice svg {
+  color: var(--primary);
+}
+
 .change-password-section {
   margin-top: 24px;
   border: 1px solid var(--border);
@@ -3121,6 +3141,12 @@ tr:last-child td {
   min-width: 240px;
 }
 
+.report-status-filter {
+  display: grid;
+  gap: 5px;
+  min-width: 185px;
+}
+
 .report-date-filter {
   display: grid;
   gap: 5px;
@@ -3128,13 +3154,15 @@ tr:last-child td {
 }
 
 .report-clinic-filter span,
+.report-status-filter span,
 .report-date-filter span {
   color: var(--muted);
   font-size: 0.78rem;
   font-weight: 700;
 }
 
-.report-clinic-filter select {
+.report-clinic-filter select,
+.report-status-filter select {
   width: 100%;
   min-height: 34px;
   border: 1px solid var(--line-strong);

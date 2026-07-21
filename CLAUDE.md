@@ -334,7 +334,9 @@ A aba `Vagas` permite:
 - Filtrar por clinica, data, mes, tipo e status.
 - Paginar a lista.
 - Visualizar claramente o estado de cada mes: `Visivel ao publico`, `Publicacao agendada` ou `Oculto do publico`.
+- O painel de publicacao oculta meses vencidos e exibe o mes vigente e todos os meses futuros que possuam vagas cadastradas.
 - Publicar agora, ocultar ou agendar a publicacao de cada mes para uma data e horario futuros.
+- O agendamento da publicacao usa data em `DD/MM/AAAA`, com calendario e mascara de digitacao, e horario em formato 24 horas `HH:MM`.
 
 Datas nos formularios aparecem como `DD/MM/AAAA`.
 
@@ -406,6 +408,7 @@ Comportamento:
 - A aba Admin > Relatorios possui o botao `Exportar PDF` com o resumo ja existente.
 - Ao lado dele existe `Baixar relatorio completo`, que abre uma versao de impressao para salvar em PDF ou imprimir.
 - O relatorio completo pode ser gerado para todas as clinicas ou para uma clinica especifica.
+- O relatorio completo pode ser filtrado por status, inclusive para gerar somente atendimentos realizados.
 - O relatorio completo permite definir periodo por data inicial e data final, no formato `DD/MM/AAAA`.
 - O relatorio completo usa `appointmentDetails` de `/api/admin/reports`.
 - Ele inclui status, data, horario, clinica, tutor, CPF, telefone, endereco completo do tutor, responsavel que levou o animal, telefone/endereco desse responsavel quando houver substituto, animal, tipo, raca, idade e microchip.
@@ -523,6 +526,7 @@ Na etapa de data, o frontend busca datas por clinica e tipo de animal via `/api/
 - Mostra usados no mes.
 - Admin aparece com limite `Ilimitado`.
 - Botao `Agendar castracao do animal`.
+- Exibe aviso de que o responsavel substituto pode ser cadastrado, alterado ou removido ate 5 horas antes do horario agendado.
 - Protetor e clinica: formulario colapsavel de alteracao de senha.
 
 ### Requisicoes da API

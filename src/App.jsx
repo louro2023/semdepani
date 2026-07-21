@@ -1169,6 +1169,10 @@ function UserDashboard({ auth, setView }) {
         <AlertCircle size={18} />
         <span><strong>Documentos obrigatórios no posto:</strong> leve cópias de identidade, CPF e comprovante de residência de Nova Iguaçu no dia da castração.</span>
       </div>
+      <div className="doc-required-notice responsible-deadline-notice">
+        <Users size={18} />
+        <span><strong>Responsável substituto:</strong> você pode cadastrar, alterar ou remover o substituto até 5 horas antes do horário agendado.</span>
+      </div>
       <button className="button primary" type="button" onClick={() => setView('inscricao')}>
         <CalendarPlus size={18} /> Agendar castração do animal
       </button>
@@ -1751,8 +1755,9 @@ function printReport(reports) {
 
 function printCompleteReport(reports, filters = {}) {
   const clinicFilter = filters.clinic || '';
+  const statusFilter = filters.status || '';
   const period = normalizeReportPeriod(filters.startDate, filters.endDate);
-  const details = filterReportAppointments(reports?.appointmentDetails || [], clinicFilter, period);
+  const details = filterReportAppointments(reports?.appointmentDetails || [], clinicFilter, period, statusFilter);
   const date = new Date().toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit', year: 'numeric' });
   const dateTime = new Date().toLocaleString('pt-BR', {
     day: '2-digit',
@@ -1762,6 +1767,7 @@ function printCompleteReport(reports, filters = {}) {
     minute: '2-digit'
   });
   const scopeLabel = clinicFilter || 'Todas as clínicas';
+  const statusFilterLabel = APPOINTMENT_STATUS_OPTIONS.find(([status]) => status === statusFilter)?.[1] || 'Todos os status';
   const periodLabel = getReportPeriodLabel(period);
   const totals = countAppointmentsByStatus(details);
   const statusRows = APPOINTMENT_STATUS_OPTIONS.map(([status, label]) => ({
@@ -1807,7 +1813,7 @@ function printCompleteReport(reports, filters = {}) {
   }).join('');
 
   const html = `<!DOCTYPE html><html lang="pt-BR"><head><meta charset="UTF-8">
-  <title>Relatório Completo - ${escapeReportHtml(scopeLabel)} - ${escapeReportHtml(periodLabel)} - ${date}</title>
+  <title>Relatório Completo - ${escapeReportHtml(scopeLabel)} - ${escapeReportHtml(statusFilterLabel)} - ${escapeReportHtml(periodLabel)} - ${date}</title>
   <style>
     @page { size: A4 landscape; margin: 11mm; }
     * { box-sizing: border-box; }
@@ -1862,6 +1868,8 @@ function printCompleteReport(reports, filters = {}) {
         <strong>${escapeReportHtml(scopeLabel)}</strong>
         <p class="sub" style="margin-top:8px;">Período</p>
         <strong>${escapeReportHtml(periodLabel)}</strong>
+        <p class="sub" style="margin-top:8px;">Status</p>
+        <strong>${escapeReportHtml(statusFilterLabel)}</strong>
       </div>
     </header>
 
@@ -1887,7 +1895,7 @@ function printCompleteReport(reports, filters = {}) {
     <section class="print-break">
       <h2>Detalhamento completo</h2>
       ${details.length === 0
-        ? '<p class="empty">Nenhum agendamento encontrado para a clínica e período selecionados.</p>'
+        ? '<p class="empty">Nenhum agendamento encontrado para os filtros selecionados.</p>'
         : `<table>
             <colgroup>
               <col style="width:9%">
@@ -1946,9 +1954,10 @@ function getReportPeriodError(startDate = '', endDate = '') {
   return '';
 }
 
-function filterReportAppointments(rows, clinicFilter, period = {}) {
+function filterReportAppointments(rows, clinicFilter, period = {}, statusFilter = '') {
   return rows.filter((row) => {
     if (clinicFilter && row.clinic !== clinicFilter) return false;
+    if (statusFilter && row.status !== statusFilter) return false;
     const rowDate = toIsoDate(row.date);
     if (period.start && rowDate < period.start) return false;
     if (period.end && rowDate > period.end) return false;
@@ -2064,6 +2073,7 @@ function escapeReportHtml(value) {
 
 function ReportsTab({ reports }) {
   const [reportClinic, setReportClinic] = useState('');
+  const [reportStatus, setReportStatus] = useState('');
   const [reportStartDate, setReportStartDate] = useState('');
   const [reportEndDate, setReportEndDate] = useState('');
   const reportClinicOptions = useMemo(() => {
@@ -2108,6 +2118,15 @@ function ReportsTab({ reports }) {
               ))}
             </select>
           </label>
+          <label className="report-status-filter">
+            <span>Status do relatório completo</span>
+            <select value={reportStatus} onChange={(event) => setReportStatus(event.target.value)}>
+              <option value="">Todos os status</option>
+              {APPOINTMENT_STATUS_OPTIONS.map(([status, label]) => (
+                <option key={status} value={status}>{label}</option>
+              ))}
+            </select>
+          </label>
           <label className="report-date-filter">
             <span>Data inicial</span>
             <DateInput value={reportStartDate} onChange={setReportStartDate} />
@@ -2124,6 +2143,7 @@ function ReportsTab({ reports }) {
             type="button"
             onClick={() => printCompleteReport(reports, {
               clinic: reportClinic,
+              status: reportStatus,
               startDate: reportStartDate,
               endDate: reportEndDate
             })}
@@ -2614,11 +2634,19 @@ function SlotsTab({ slots, clinics, reload, auth }) {
   const [monthReleases, setMonthReleases] = useState([]);
   const [releaseLoadingMonth, setReleaseLoadingMonth] = useState('');
   const [schedulingMonth, setSchedulingMonth] = useState('');
-  const [scheduledReleaseAt, setScheduledReleaseAt] = useState('');
+  const [scheduledReleaseDate, setScheduledReleaseDate] = useState('');
+  const [scheduledReleaseTime, setScheduledReleaseTime] = useState('');
   const [page, setPage] = useState(1);
 
   const clinicOptions = useMemo(() => clinics.filter((clinic) => clinic.active), [clinics]);
   const selectedSlots = useMemo(() => slots.filter((slot) => selectedIds.has(slot.id)), [slots, selectedIds]);
+  const slotMonthOptions = useMemo(() => (
+    Array.from(new Set(slots.map((slot) => toIsoDate(slot.date).slice(0, 7)).filter(Boolean))).sort()
+  ), [slots]);
+  const publicationMonthReleases = useMemo(() => {
+    const currentMonth = getCurrentMonthKey();
+    return monthReleases.filter((release) => release.month >= currentMonth);
+  }, [monthReleases]);
 
   const filteredSlots = useMemo(() => {
     const filterDate = toIsoDate(filters.date);
@@ -2832,7 +2860,8 @@ function SlotsTab({ slots, clinics, reload, auth }) {
         item.month === month ? data.release : item
       )));
       setSchedulingMonth('');
-      setScheduledReleaseAt('');
+      setScheduledReleaseDate('');
+      setScheduledReleaseTime('');
     } catch (err) {
       setError(err.message);
     } finally {
@@ -2842,15 +2871,28 @@ function SlotsTab({ slots, clinics, reload, auth }) {
 
   function openReleaseSchedule(month) {
     const current = monthReleases.find((item) => item.month === month);
-    setSchedulingMonth(month);
-    setScheduledReleaseAt(current?.status === 'scheduled' && current.release_at
+    const initialDateTime = current?.status === 'scheduled' && current.release_at
       ? current.release_at.replace(' ', 'T').slice(0, 16)
-      : getDefaultScheduleDateTime());
+      : getDefaultScheduleDateTime();
+    const [date, time] = initialDateTime.split('T');
+    setSchedulingMonth(month);
+    setScheduledReleaseDate(date || '');
+    setScheduledReleaseTime(time || '');
   }
 
   function submitReleaseSchedule(event, month) {
     event.preventDefault();
-    updateMonthRelease(month, 'scheduled', scheduledReleaseAt);
+    const releaseDate = toIsoDate(scheduledReleaseDate);
+    const releaseTime = toTime24(scheduledReleaseTime);
+    if (!releaseDate) {
+      setError('Informe uma data válida para a publicação no formato DD/MM/AAAA.');
+      return;
+    }
+    if (!releaseTime) {
+      setError('Informe um horário válido para a publicação no formato de 24 horas HH:MM.');
+      return;
+    }
+    updateMonthRelease(month, 'scheduled', `${releaseDate}T${releaseTime}`);
   }
 
   if (renewRows) {
@@ -2970,7 +3012,7 @@ function SlotsTab({ slots, clinics, reload, auth }) {
           <div>
             <span className="eyebrow">Visibilidade pública</span>
             <h3 id="month-release-title">Publicação das vagas por mês</h3>
-            <p>Defina separadamente quando as vagas de cada mês poderão ser vistas e agendadas pelo público.</p>
+            <p>Defina quando as vagas do mês vigente e dos próximos meses poderão ser vistas e agendadas pelo público.</p>
           </div>
           <div className="month-release-legend" aria-label="Legenda dos estados">
             <span className="month-release-status public">Visível</span>
@@ -2978,9 +3020,9 @@ function SlotsTab({ slots, clinics, reload, auth }) {
             <span className="month-release-status hidden">Oculto</span>
           </div>
         </div>
-        {monthReleases.length ? (
+        {publicationMonthReleases.length ? (
           <div className="month-release-grid">
-            {monthReleases.map((release) => {
+            {publicationMonthReleases.map((release) => {
               const isLoading = releaseLoadingMonth === release.month;
               return (
                 <article className={`month-release-card ${release.status}`} key={release.month}>
@@ -3002,18 +3044,24 @@ function SlotsTab({ slots, clinics, reload, auth }) {
                   </p>
                   {schedulingMonth === release.month ? (
                     <form className="month-release-schedule" onSubmit={(event) => submitReleaseSchedule(event, release.month)}>
-                      <label className="field">
-                        <span>Data e horário da publicação</span>
-                        <input
-                          type="datetime-local"
-                          value={scheduledReleaseAt}
-                          min={getMinimumScheduleDateTime()}
-                          onChange={(event) => setScheduledReleaseAt(event.target.value)}
+                      <div className="month-release-schedule-fields">
+                        <DateField
+                          label="Data da publicação"
+                          value={scheduledReleaseDate}
+                          onChange={setScheduledReleaseDate}
+                          hint="Formato: DD/MM/AAAA"
                           required
                         />
-                      </label>
+                        <TimeField
+                          label="Horário da publicação"
+                          value={scheduledReleaseTime}
+                          onChange={setScheduledReleaseTime}
+                          hint="Formato 24 horas: HH:MM"
+                          required
+                        />
+                      </div>
                       <div className="month-release-schedule-actions">
-                        <button className="button ghost small" type="button" onClick={() => { setSchedulingMonth(''); setScheduledReleaseAt(''); }}>Cancelar</button>
+                        <button className="button ghost small" type="button" onClick={() => { setSchedulingMonth(''); setScheduledReleaseDate(''); setScheduledReleaseTime(''); }}>Cancelar</button>
                         <button className="button primary small" type="submit" disabled={isLoading}>
                           <Calendar size={16} /> Salvar agendamento
                         </button>
@@ -3041,7 +3089,7 @@ function SlotsTab({ slots, clinics, reload, auth }) {
             })}
           </div>
         ) : (
-          <p className="month-release-empty">Cadastre vagas para visualizar os controles mensais de publicação.</p>
+          <p className="month-release-empty">Não há vagas cadastradas para o mês vigente nem para meses futuros.</p>
         )}
       </section>
       <div className="filter-bar slots-filter-bar" aria-label="Filtros de vagas">
@@ -3057,8 +3105,8 @@ function SlotsTab({ slots, clinics, reload, auth }) {
           <span>Mês</span>
           <select value={filters.month} onChange={(event) => setFilters({ ...filters, month: event.target.value })}>
             <option value="">Todos</option>
-            {monthReleases.map((release) => (
-              <option key={release.month} value={release.month}>{formatMonthYear(release.month)}</option>
+            {slotMonthOptions.map((month) => (
+              <option key={month} value={month}>{formatMonthYear(month)}</option>
             ))}
           </select>
         </label>
@@ -4009,6 +4057,11 @@ function formatMonthYear(value = '') {
   }));
 }
 
+function getCurrentMonthKey() {
+  const today = new Date();
+  return `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}`;
+}
+
 function formatReleaseDateTime(value = '') {
   const match = String(value).match(/^(\d{4})-(\d{2})-(\d{2})[ T](\d{2}):(\d{2})/);
   if (!match) return value || '-';
@@ -4022,10 +4075,6 @@ function toLocalDateTimeInput(date) {
   const hour = String(date.getHours()).padStart(2, '0');
   const minute = String(date.getMinutes()).padStart(2, '0');
   return `${year}-${month}-${day}T${hour}:${minute}`;
-}
-
-function getMinimumScheduleDateTime() {
-  return toLocalDateTimeInput(new Date(Date.now() + 60_000));
 }
 
 function getDefaultScheduleDateTime() {
