@@ -77,9 +77,9 @@ dist/               Build Vite, gerado localmente/producao
 - Datas: padrao visual `DD/MM/AAAA` no frontend e exports CSV/PDF; o banco continua armazenando `YYYY-MM-DD`.
 - Horarios: campos de horario usam padrao 24 horas `HH:MM`, evitando exibicao AM/PM.
 - Disponibilidade publica: tutor e protetor so visualizam/selecionam vagas com pelo menos 8 horas de antecedencia.
-- Disponibilidade manual: admin pode usar `Disponibilizar Vagas Agora`/`Ocultar Vagas do Público` na aba Vagas para controlar se as vagas aparecem ao público.
+- Disponibilidade mensal: admin controla cada mes separadamente como oculto, visivel agora ou com publicacao agendada para data e horario futuros.
 - Disponibilidade para admin: admin logado pode agendar vagas futuras ja lancadas no sistema, mesmo fora da janela publica de 5 dias e sem a trava de 8 horas.
-- Com a disponibilizacao manual desligada, nenhuma vaga aparece ao público.
+- Meses sem publicacao configurada permanecem ocultos do publico.
 - API: rotas `/api` desconhecidas retornam JSON de erro antes do fallback da SPA, evitando resposta HTML em chamadas do frontend.
 - Auditoria: removidos import/funcao sem uso (`Plus` no frontend e `bookingTargetMonth` no banco).
 
@@ -89,7 +89,7 @@ dist/               Build Vite, gerado localmente/producao
 
 ### Orientacao Sobre as Ultimas Mudancas
 
-As mudancas recentes de filtros, renovacao de vagas, datas em `DD/MM/AAAA`, horarios em 24h, regra de 8 horas, controle manual de exibicao publica e relatorio completo nao exigiram nova tabela, nova coluna nem migracao manual.
+A publicacao mensal adiciona a tabela `slot_release_months`. Ela e criada automaticamente por `initSchema()` e nao exige migracao manual.
 
 O banco continua usando:
 
@@ -148,6 +148,7 @@ Outras tabelas:
 - `clinics`: clinicas cadastradas, endereco, bairro, telefone, active.
 - `animals`: animais do usuario.
 - `settings`: chaves internas de seed/importacao.
+- `slot_release_months`: mes (`YYYY-MM`) e data/hora em que suas vagas se tornam publicas.
 
 ### Migracoes Automaticas Existentes
 
@@ -252,9 +253,9 @@ O limite mensal e calculado pelo mes do slot escolhido. Na reserva, a contagem u
 
 ### Regra de Disponibilidade das Vagas
 
-Tutor e protetor so podem visualizar e selecionar vagas quando o admin ativar `Disponibilizar Vagas Agora`.
+Tutor e protetor so podem visualizar e selecionar vagas de meses publicados pela administracao.
 
-Com a disponibilizacao ativa, continuam obrigatorias as regras abaixo:
+Para um mes publicado, continuam obrigatorias as regras abaixo:
 
 - Vaga ativa.
 - Clinica ativa.
@@ -263,12 +264,12 @@ Com a disponibilizacao ativa, continuam obrigatorias as regras abaixo:
 - Data/hora da vaga pelo menos 8 horas depois do momento atual local.
 - Limite mensal por CPF.
 
-Com a disponibilizacao desligada, as rotas publicas de vagas retornam clinicas sem vagas disponiveis e nenhuma data selecionavel.
+Meses ocultos ou com publicacao agendada para o futuro nao retornam vagas nas rotas publicas.
 
 Exemplo:
 
 - Vaga em `28/05/2026 11:00`.
-- Com `Disponibilizar Vagas Agora` ativo, ela so aparece se o momento atual for ate no maximo `28/05/2026 03:00` ou antes, respeitando o intervalo minimo de 8 horas.
+- Com maio de 2026 publicado, ela so aparece se o momento atual for ate no maximo `28/05/2026 03:00` ou antes, respeitando o intervalo minimo de 8 horas.
 - Se faltar menos de 8 horas, a vaga fica oculta e tambem nao pode ser reservada pela API.
 
 Para administrador logado:
@@ -302,7 +303,7 @@ Comportamento atual:
 - Clinicas sem vaga aparecem na lista, mas desabilitadas.
 - O texto exibido e `Sem vagas disponiveis no momento`.
 - Depois de escolher a clinica, o usuario escolhe uma data disponivel para a unidade.
-- Para tutor/protetor, datas so aparecem quando `Disponibilizar Vagas Agora` esta ativo, e ainda respeitam lotacao e 8 horas de antecedencia.
+- Para tutor/protetor, datas so aparecem quando o respectivo mes esta publicado, e ainda respeitam lotacao e 8 horas de antecedencia.
 - Para admin logado, datas futuras com vaga disponivel aparecem mesmo sem disponibilizacao publica e sem a trava de 8 horas.
 - O usuario escolhe a clinica e a data, mas nao escolhe horario.
 - O backend reserva automaticamente o primeiro horario compativel disponivel na data escolhida.
@@ -332,7 +333,10 @@ A aba `Vagas` permite:
 - Selecionar varias vagas.
 - Filtrar por clinica, data, mes, tipo e status.
 - Paginar a lista.
-- Ativar `Disponibilizar Vagas Agora` ou `Ocultar Vagas do Público`, salvo na tabela `settings` com a chave `public_slots_release_now`.
+- Visualizar claramente o estado de cada mes: `Visivel ao publico`, `Publicacao agendada` ou `Oculto do publico`.
+- O painel de publicacao oculta meses vencidos e exibe o mes vigente e todos os meses futuros que possuam vagas cadastradas.
+- Publicar agora, ocultar ou agendar a publicacao de cada mes para uma data e horario futuros.
+- O agendamento da publicacao usa data em `DD/MM/AAAA`, com calendario e mascara de digitacao, e horario em formato 24 horas `HH:MM`.
 
 Datas nos formularios aparecem como `DD/MM/AAAA`.
 
@@ -404,6 +408,7 @@ Comportamento:
 - A aba Admin > Relatorios possui o botao `Exportar PDF` com o resumo ja existente.
 - Ao lado dele existe `Baixar relatorio completo`, que abre uma versao de impressao para salvar em PDF ou imprimir.
 - O relatorio completo pode ser gerado para todas as clinicas ou para uma clinica especifica.
+- O relatorio completo pode ser filtrado por status, inclusive para gerar somente atendimentos realizados.
 - O relatorio completo permite definir periodo por data inicial e data final, no formato `DD/MM/AAAA`.
 - O relatorio completo usa `appointmentDetails` de `/api/admin/reports`.
 - Ele inclui status, data, horario, clinica, tutor, CPF, telefone, endereco completo do tutor, responsavel que levou o animal, telefone/endereco desse responsavel quando houver substituto, animal, tipo, raca, idade e microchip.
@@ -452,7 +457,8 @@ Comportamento:
 | PUT/DELETE | `/api/admin/clinics/:id` | Editar/desativar/excluir clinica |
 | GET/POST | `/api/admin/slots` | Listar/criar vagas |
 | PUT/DELETE | `/api/admin/slots/:id` | Editar/desativar/excluir vaga |
-| GET/POST | `/api/admin/slots/release-now` | Consultar/alterar liberacao manual de vagas ao publico |
+| GET | `/api/admin/slots/releases` | Listar estado de publicacao de todos os meses com vagas |
+| PUT | `/api/admin/slots/releases/:month` | Publicar agora, ocultar ou agendar a publicacao de um mes |
 | POST | `/api/admin/slots/renew` | Renovar vagas selecionadas com novos dados |
 | POST | `/api/admin/slots/auto-renew` | Renovacao automatica mensal |
 | GET/POST/PUT | `/api/admin/users` | CRUD usuarios |
@@ -520,6 +526,7 @@ Na etapa de data, o frontend busca datas por clinica e tipo de animal via `/api/
 - Mostra usados no mes.
 - Admin aparece com limite `Ilimitado`.
 - Botao `Agendar castracao do animal`.
+- Exibe aviso de que o responsavel substituto pode ser cadastrado, alterado ou removido ate 5 horas antes do horario agendado.
 - Protetor e clinica: formulario colapsavel de alteracao de senha.
 
 ### Requisicoes da API
@@ -546,8 +553,9 @@ Tutor pode realizar 1 agendamento por mes; Protetor Cadastrado pode realizar ate
 
 Demais regras mantidas:
 
-- Chegar no horario informado.
-- Permanecer na clinica durante o procedimento.
+- Comparecer a clinica a partir do horario agendado.
+- O atendimento sera realizado por ordem de chegada entre os animais agendados para o mesmo horario.
+- O responsavel deve permanecer na clinica durante todo o procedimento e estar preparado para transportar o animal, que podera estar sonolento apos a cirurgia.
 - Caes: coleira, guia e focinheira quando necessario.
 - Gatos: 1 por caixa de transporte.
 - Banho no dia anterior, sem pulgas ou carrapatos.
@@ -622,6 +630,7 @@ sqlite3 "$DB_PATH" "PRAGMA table_info(users);"
 sqlite3 "$DB_PATH" "PRAGMA table_info(appointments);"
 sqlite3 "$DB_PATH" "PRAGMA table_info(slots);"
 sqlite3 "$DB_PATH" "PRAGMA table_info(settings);"
+sqlite3 "$DB_PATH" "PRAGMA table_info(slot_release_months);"
 ```
 
 ### Checklist de Vagas em Producao
@@ -629,49 +638,50 @@ sqlite3 "$DB_PATH" "PRAGMA table_info(settings);"
 Para o publico enxergar vagas, confirme estes pontos no banco de producao:
 
 - O servidor foi reiniciado depois do deploy, para executar `initSchema()`.
-- A tabela `settings` existe.
-- A chave `public_slots_release_now` esta com valor `1`.
+- A tabela `slot_release_months` existe.
+- O mes da vaga possui um registro com `release_at` menor ou igual ao horario atual local.
 - As vagas estao com `active = 1`.
 - As clinicas das vagas estao com `active = 1`.
 - As vagas possuem `clinic_id` preenchido e apontando para uma clinica existente.
 - `occupied_quantity < total_quantity`.
 - A data/hora da vaga ainda respeita a regra de 8 horas.
 
-Consultar a chave que controla exibicao publica:
+Consultar a publicacao mensal:
 
 ```bash
-sqlite3 data/castracao.sqlite "SELECT key, value FROM settings WHERE key = 'public_slots_release_now';"
+sqlite3 data/castracao.sqlite "SELECT month, release_at, datetime(release_at) <= datetime('now', 'localtime') AS public FROM slot_release_months ORDER BY month;"
 ```
 
 Se usar `DB_PATH`:
 
 ```bash
-sqlite3 "$DB_PATH" "SELECT key, value FROM settings WHERE key = 'public_slots_release_now';"
+sqlite3 "$DB_PATH" "SELECT month, release_at, datetime(release_at) <= datetime('now', 'localtime') AS public FROM slot_release_months ORDER BY month;"
 ```
 
-Valores:
+Estados:
 
-- `1`: vagas disponiveis aparecem ao publico.
-- `0` ou ausencia da chave: vagas ficam ocultas ao publico.
+- Registro com `release_at` no passado: mes visivel ao publico.
+- Registro com `release_at` no futuro: publicacao agendada.
+- Ausencia do mes na tabela: mes oculto.
 
-Ativar a exibicao publica direto no banco, somente em emergencia:
+Publicar janeiro de 2027 direto no banco, somente em emergencia:
 
 ```bash
-sqlite3 data/castracao.sqlite "INSERT OR REPLACE INTO settings (key, value) VALUES ('public_slots_release_now', '1');"
+sqlite3 data/castracao.sqlite "INSERT OR REPLACE INTO slot_release_months (month, release_at, updated_at) VALUES ('2027-01', datetime('now', 'localtime'), CURRENT_TIMESTAMP);"
 ```
 
-Desativar a exibicao publica direto no banco:
+Ocultar janeiro de 2027 direto no banco:
 
 ```bash
-sqlite3 data/castracao.sqlite "INSERT OR REPLACE INTO settings (key, value) VALUES ('public_slots_release_now', '0');"
+sqlite3 data/castracao.sqlite "DELETE FROM slot_release_months WHERE month = '2027-01';"
 ```
 
 Se usar `DB_PATH`, troque `data/castracao.sqlite` por `"$DB_PATH"`.
 
-Listar vagas que deveriam aparecer ao publico quando `public_slots_release_now = 1`:
+Listar vagas de meses publicados que deveriam aparecer ao publico:
 
 ```bash
-sqlite3 data/castracao.sqlite "SELECT s.id, s.date, s.time, s.species, s.sex, s.total_quantity, s.occupied_quantity, c.name AS clinic FROM slots s JOIN clinics c ON c.id = s.clinic_id WHERE s.active = 1 AND c.active = 1 AND s.occupied_quantity < s.total_quantity AND s.date >= date('now', 'localtime') AND datetime(s.date || ' ' || s.time) >= datetime('now', 'localtime', '+8 hours') ORDER BY s.date, s.time LIMIT 50;"
+sqlite3 data/castracao.sqlite "SELECT s.id, s.date, s.time, s.species, s.sex, s.total_quantity, s.occupied_quantity, c.name AS clinic FROM slots s JOIN clinics c ON c.id = s.clinic_id JOIN slot_release_months r ON r.month = substr(s.date, 1, 7) WHERE datetime(r.release_at) <= datetime('now', 'localtime') AND s.active = 1 AND c.active = 1 AND s.occupied_quantity < s.total_quantity AND s.date >= date('now', 'localtime') AND datetime(s.date || ' ' || s.time) >= datetime('now', 'localtime', '+8 hours') ORDER BY s.date, s.time LIMIT 50;"
 ```
 
 Verificar vagas antigas sem `clinic_id`, que nao aparecem nas consultas publicas:
@@ -768,7 +778,7 @@ Em producao, configurar `ADMIN_CPF` e `ADMIN_PASSWORD`.
 - Reativacao de cancelado incrementa novamente a vaga, respeitando capacidade salvo override de admin.
 - `slots.clinic` e texto legado; `slots.clinic_id` e a FK atual.
 - `migrateSlotClinics()` preenche `clinic_id` para slots antigos quando possivel.
-- `bookingTargetMonth()` foi removida; a exibicao publica agora e controlada pela chave `public_slots_release_now`.
+- A exibicao publica e controlada por mes em `slot_release_months`; ausencia de registro significa mes oculto.
 - Upload de documentos ainda existe no backend por compatibilidade, mas o fluxo principal orienta levar documentos fisicos.
 - Ao alterar regras de disponibilidade, atualizar sempre os quatro pontos: `/api/clinics/available`, `/api/clinics/:clinicId/available-dates`, `/api/availability` e `createAutomaticAppointment()`.
 - Ao alterar formato de data/hora, manter conversao entre frontend (`DD/MM/AAAA`, `HH:MM`) e banco (`YYYY-MM-DD`, `HH:MM`).

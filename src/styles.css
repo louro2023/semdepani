@@ -1611,42 +1611,175 @@ select:focus,
   flex-wrap: wrap;
 }
 
-.release-now-button {
-  min-width: 230px;
+.month-release-panel {
+  display: grid;
+  gap: 16px;
+  padding: 18px;
+  background: linear-gradient(135deg, #f6f7ff 0%, #eef7f4 100%);
+  border: 1px solid var(--line);
+  border-radius: 14px;
 }
 
-.release-now-button.active {
-  color: #0d6a4b;
-  background: #e5f7ee;
-  border-color: #a8d8c0;
+.month-release-heading {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 20px;
 }
 
-.release-now-button.active:hover:not(:disabled) {
-  color: #084d37;
-  background: #d8f0e5;
+.month-release-heading h3 {
+  margin: 3px 0 5px;
 }
 
-.release-now-badge {
+.month-release-heading p,
+.month-release-description,
+.month-release-empty {
+  margin: 0;
+  color: var(--muted);
+  font-size: 0.88rem;
+  line-height: 1.5;
+}
+
+.month-release-legend,
+.month-release-actions,
+.month-release-schedule-actions {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.month-release-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(310px, 1fr));
+  gap: 12px;
+}
+
+.month-release-card {
+  display: grid;
+  align-content: start;
+  gap: 12px;
+  min-width: 0;
+  padding: 15px;
+  background: #fff;
+  border: 1px solid var(--line);
+  border-left: 4px solid #aeb3c1;
+  border-radius: 12px;
+  box-shadow: 0 5px 18px rgba(17, 17, 51, 0.05);
+}
+
+.month-release-card.public {
+  border-left-color: #16845d;
+}
+
+.month-release-card.scheduled {
+  border-left-color: #d17a18;
+}
+
+.month-release-card-top {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.month-release-card-top > div {
+  display: grid;
+  gap: 3px;
+}
+
+.month-release-card-top strong {
+  color: var(--ink);
+  font-size: 1.02rem;
+}
+
+.month-release-card-top > div > span {
+  color: var(--muted);
+  font-size: 0.78rem;
+}
+
+.month-release-status {
   display: inline-flex;
   align-items: center;
-  min-height: 34px;
-  padding: 4px 10px;
+  min-height: 28px;
+  padding: 3px 9px;
   border: 1px solid transparent;
   border-radius: 999px;
-  font-size: 0.8rem;
+  font-size: 0.74rem;
   font-weight: 800;
+  white-space: nowrap;
 }
 
-.release-now-badge.active {
+.month-release-status.public {
   color: #0d6a4b;
   background: #e5f7ee;
   border-color: #a8d8c0;
 }
 
-.release-now-badge.inactive {
+.month-release-status.scheduled {
+  color: #8a4b08;
+  background: #fff3dd;
+  border-color: #edc987;
+}
+
+.month-release-status.hidden {
   color: #5f6470;
   background: #eceff3;
   border-color: #d8dce3;
+}
+
+.month-release-schedule {
+  display: grid;
+  gap: 10px;
+  padding-top: 10px;
+  border-top: 1px solid var(--line);
+}
+
+.month-release-schedule-fields {
+  display: grid;
+  grid-template-columns: minmax(180px, 1.2fr) minmax(150px, 0.8fr);
+  gap: 10px;
+  align-items: start;
+}
+
+.month-release-schedule .field {
+  gap: 5px;
+}
+
+.month-release-schedule input {
+  min-height: 40px;
+}
+
+.button.danger.subtle {
+  color: var(--danger);
+  background: #fff3f1;
+  border-color: #f3c5be;
+}
+
+.button.danger.subtle:hover:not(:disabled) {
+  color: #fff;
+  background: var(--danger);
+  border-color: var(--danger);
+}
+
+@media (max-width: 720px) {
+  .month-release-heading,
+  .month-release-card-top {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .month-release-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .month-release-schedule-fields {
+    grid-template-columns: 1fr;
+  }
+
+  .month-release-status {
+    width: fit-content;
+  }
 }
 
 .renewal-screen {
@@ -2630,6 +2763,15 @@ tr:last-child td {
   margin-top: 2px;
 }
 
+.responsible-deadline-notice {
+  background: rgba(8, 119, 107, 0.08);
+  border-color: rgba(8, 119, 107, 0.25);
+}
+
+.responsible-deadline-notice svg {
+  color: var(--primary);
+}
+
 .change-password-section {
   margin-top: 24px;
   border: 1px solid var(--border);
@@ -2999,6 +3141,12 @@ tr:last-child td {
   min-width: 240px;
 }
 
+.report-status-filter {
+  display: grid;
+  gap: 5px;
+  min-width: 185px;
+}
+
 .report-date-filter {
   display: grid;
   gap: 5px;
@@ -3006,13 +3154,15 @@ tr:last-child td {
 }
 
 .report-clinic-filter span,
+.report-status-filter span,
 .report-date-filter span {
   color: var(--muted);
   font-size: 0.78rem;
   font-weight: 700;
 }
 
-.report-clinic-filter select {
+.report-clinic-filter select,
+.report-status-filter select {
   width: 100%;
   min-height: 34px;
   border: 1px solid var(--line-strong);
