@@ -346,6 +346,8 @@ Datas nos formularios aparecem como `DD/MM/AAAA`.
 
 Horarios nos formularios aparecem como `HH:MM` em formato 24 horas.
 
+Ao criar ou renovar, o backend rejeita datas no passado e horarios fora do intervalo `00:00` a `23:59`.
+
 ### Renovar Vagas Selecionadas
 
 Na aba `Vagas`, ao selecionar uma ou mais vagas e clicar em `Renovar Vagas`, o sistema abre uma nova tela de renovacao.

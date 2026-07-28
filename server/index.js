@@ -771,6 +771,7 @@ app.post('/api/admin/slots/renew', requireAdmin, (req, res) => {
           if (!Number.isInteger(sourceId) || sourceId <= 0) throw httpError(400, 'Seleção de vagas inválida.');
           if (!getSlot(sourceId)) throw httpError(404, `Vaga ${sourceId} não encontrada.`);
           const slot = parseSlot(renewal);
+          assertSlotDateIsCurrentOrFuture(slot.date);
           const result = db.prepare(`
             INSERT INTO slots (
               date, time, species, sex, total_quantity, occupied_quantity, clinic_id, clinic, active,
@@ -789,6 +790,7 @@ app.post('/api/admin/slots/renew', requireAdmin, (req, res) => {
           const slot = getSlot(id);
           if (!slot) throw httpError(404, `Vaga ${id} não encontrada.`);
           const newDate = db.prepare("SELECT date(?, '+1 month') AS d").get(slot.date).d;
+          assertSlotDateIsCurrentOrFuture(newDate);
           const result = db.prepare(`
             INSERT INTO slots (
               date, time, species, sex, total_quantity, occupied_quantity, clinic_id, clinic, active,
@@ -820,6 +822,7 @@ app.post('/api/admin/slots/renew', requireAdmin, (req, res) => {
 app.post('/api/admin/slots', requireAdmin, (req, res) => {
   try {
     const slot = parseSlot(req.body);
+    assertSlotDateIsCurrentOrFuture(slot.date);
     db.exec('BEGIN IMMEDIATE');
     try {
       const result = db.prepare(`
@@ -1306,13 +1309,18 @@ function parseSlot(input = {}) {
     clinic: clinic?.name || ''
   };
   if (!/^\d{4}-\d{2}-\d{2}$/.test(slot.date)) throw httpError(400, 'Informe uma data válida.');
-  if (!/^\d{2}:\d{2}$/.test(slot.time)) throw httpError(400, 'Informe um horário válido.');
+  if (!/^([01]\d|2[0-3]):[0-5]\d$/.test(slot.time)) throw httpError(400, 'Informe um horário válido no formato 24 horas HH:MM.');
   if (!['cao', 'gato'].includes(slot.species)) throw httpError(400, 'Selecione a espécie da vaga.');
   if (!['macho', 'femea'].includes(slot.sex)) throw httpError(400, 'Selecione o sexo da vaga.');
   if (!Number.isInteger(slot.total_quantity) || slot.total_quantity <= 0) throw httpError(400, 'A quantidade deve ser maior que zero.');
   if (!clinic) throw httpError(400, 'Selecione uma clínica cadastrada.');
   if (!clinic.active) throw httpError(400, 'Selecione uma clínica ativa.');
   return slot;
+}
+
+function assertSlotDateIsCurrentOrFuture(date) {
+  const valid = db.prepare("SELECT date(?) >= date('now', 'localtime') AS valid").get(date).valid;
+  if (!valid) throw httpError(400, 'A data da vaga não pode estar no passado.');
 }
 
 function parseClinic(input = {}) {
