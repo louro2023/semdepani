@@ -1290,6 +1290,45 @@ select:focus,
   box-shadow: 0 4px 16px rgba(8, 119, 107, 0.22);
 }
 
+.forgot-password-link {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+  justify-self: center;
+  padding: 6px 8px;
+  color: var(--primary-dark);
+  background: transparent;
+  border: 0;
+  font-weight: 800;
+}
+
+.forgot-password-link:hover {
+  color: var(--primary);
+  text-decoration: underline;
+}
+
+.missing-email-label {
+  color: var(--danger);
+  font-size: 0.82rem;
+  font-weight: 800;
+}
+
+.password-recovery-panel {
+  text-align: left;
+}
+
+.recovery-icon {
+  display: grid;
+  width: 48px;
+  height: 48px;
+  margin: 0 auto;
+  place-items: center;
+  color: var(--primary-dark);
+  border-radius: 50%;
+  background: #d8eeea;
+}
+
 .toast,
 .inline-alert,
 .inline-success,

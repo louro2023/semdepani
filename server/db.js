@@ -177,12 +177,23 @@ export function initSchema() {
       created_at TEXT NOT NULL DEFAULT (datetime('now', 'localtime'))
     );
 
+    CREATE TABLE IF NOT EXISTS password_reset_tokens (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      token_hash TEXT NOT NULL UNIQUE,
+      expires_at TEXT NOT NULL,
+      used_at TEXT,
+      created_at TEXT NOT NULL DEFAULT (datetime('now', 'localtime'))
+    );
+
     CREATE INDEX IF NOT EXISTS idx_slot_audit_logs_event_at
       ON slot_audit_logs(event_at DESC, id DESC);
     CREATE INDEX IF NOT EXISTS idx_slot_audit_logs_slot_id
       ON slot_audit_logs(slot_id);
     CREATE INDEX IF NOT EXISTS idx_user_notifications_unread
       ON user_notifications(user_id, read_at, created_at DESC);
+    CREATE INDEX IF NOT EXISTS idx_password_reset_tokens_lookup
+      ON password_reset_tokens(token_hash, expires_at, used_at);
   `);
 
   migrateUsersForClinicRole();

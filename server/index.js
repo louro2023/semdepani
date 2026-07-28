@@ -47,6 +47,8 @@ const ROLE_LIMITS = {
   clinica: 0
 };
 const RESPONSIBLE_UPDATE_MIN_HOURS = 5;
+const PASSWORD_RESET_EXPIRY_MINUTES = 60;
+const EMAIL_SUPPORT_WHATSAPP_URL = `https://wa.me/552137663341?text=${encodeURIComponent('Olá, gostaria de vincular meu email ao meu usuario de Tutor do Castração Animal Online.')}`;
 
 const docUpload = multer({
   storage: multer.diskStorage({
@@ -110,6 +112,8 @@ app.use(express.json({ limit: '2mb' }));
 const authLimiter = rateLimit({ windowMs: 60_000, max: 15, standardHeaders: true, legacyHeaders: false });
 app.use('/api/auth/login', authLimiter);
 app.use('/api/auth/register', authLimiter);
+app.use('/api/auth/forgot-password', rateLimit({ windowMs: 15 * 60_000, max: 5, standardHeaders: true, legacyHeaders: false }));
+app.use('/api/auth/reset-password', rateLimit({ windowMs: 15 * 60_000, max: 10, standardHeaders: true, legacyHeaders: false }));
 app.use('/api/public/cpf-status', rateLimit({ windowMs: 60_000, max: 60, standardHeaders: true, legacyHeaders: false }));
 app.use('/api/public/inscricao', rateLimit({ windowMs: 60_000, max: 5, standardHeaders: true, legacyHeaders: false }));
 app.use('/api/me/password', rateLimit({ windowMs: 60_000, max: 5, standardHeaders: true, legacyHeaders: false }));
@@ -227,6 +231,100 @@ app.post('/api/auth/login', (req, res) => {
   res.json({ token: signToken(user), user: publicUser(user) });
 });
 
+app.post('/api/auth/forgot-password', async (req, res) => {
+  const genericResponse = {
+    message: 'Se o CPF estiver cadastrado com um e-mail válido, enviaremos as instruções para redefinir a senha.'
+  };
+  try {
+    const cpf = normalizeCpf(req.body?.cpf);
+    const user = isValidCpf(cpf) ? getUserByCpf(cpf) : null;
+    if (!user || !user.active || !user.password_hash || !['admin', 'tutor', 'protetor'].includes(user.role) || !isValidEmail(user.email)) {
+      return res.json({
+        message: 'Não foi possível enviar a recuperação por e-mail. Você será encaminhado ao atendimento para vincular seu e-mail.',
+        action: 'whatsapp',
+        whatsappUrl: EMAIL_SUPPORT_WHATSAPP_URL
+      });
+    }
+
+    const rawToken = crypto.randomBytes(32).toString('hex');
+    const tokenHash = hashPasswordResetToken(rawToken);
+    db.exec('BEGIN IMMEDIATE');
+    try {
+      db.prepare(`
+        UPDATE password_reset_tokens
+        SET used_at = datetime('now', 'localtime')
+        WHERE user_id = ? AND used_at IS NULL
+      `).run(user.id);
+      db.prepare(`
+        INSERT INTO password_reset_tokens (user_id, token_hash, expires_at)
+        VALUES (?, ?, datetime('now', 'localtime', ?))
+      `).run(user.id, tokenHash, `+${PASSWORD_RESET_EXPIRY_MINUTES} minutes`);
+      db.exec('COMMIT');
+    } catch (error) {
+      db.exec('ROLLBACK');
+      throw error;
+    }
+
+    try {
+      const resetUrl = `${getPublicBaseUrl(req)}/?resetToken=${encodeURIComponent(rawToken)}`;
+      await sendPasswordResetEmail(user.email, user.name, resetUrl, user.role);
+    } catch (error) {
+      db.prepare(`
+        UPDATE password_reset_tokens
+        SET used_at = datetime('now', 'localtime')
+        WHERE token_hash = ?
+      `).run(tokenHash);
+      console.error('[email] Falha ao enviar recuperação de senha:', error.message);
+      throw httpError(503, 'O serviço de e-mail está temporariamente indisponível. Tente novamente mais tarde.');
+    }
+    res.json(genericResponse);
+  } catch (error) {
+    sendError(res, error);
+  }
+});
+
+app.get('/api/auth/reset-password/:token', (req, res) => {
+  const reset = getValidPasswordReset(req.params.token);
+  if (!reset) return res.status(400).json({ message: 'Este link é inválido, já foi utilizado ou expirou.' });
+  res.json({ valid: true, role: reset.role });
+});
+
+app.post('/api/auth/reset-password', (req, res) => {
+  try {
+    const token = String(req.body?.token || '');
+    const password = String(req.body?.password || '');
+    if (password.length < 6) throw httpError(400, 'A nova senha deve ter pelo menos 6 caracteres.');
+    let resetRole = 'tutor';
+
+    db.exec('BEGIN IMMEDIATE');
+    try {
+      const reset = getValidPasswordReset(token);
+      if (!reset) throw httpError(400, 'Este link é inválido, já foi utilizado ou expirou.');
+      resetRole = reset.role;
+      db.prepare(`
+        UPDATE users
+        SET password_hash = ?, updated_at = CURRENT_TIMESTAMP
+        WHERE id = ? AND active = 1
+      `).run(bcrypt.hashSync(password, 12), reset.user_id);
+      db.prepare(`
+        UPDATE password_reset_tokens
+        SET used_at = datetime('now', 'localtime')
+        WHERE user_id = ? AND used_at IS NULL
+      `).run(reset.user_id);
+      db.exec('COMMIT');
+    } catch (error) {
+      db.exec('ROLLBACK');
+      throw error;
+    }
+    res.json({
+      message: `Senha redefinida com sucesso. Você já pode entrar na ${resetRole === 'admin' ? 'Área Administrativa' : 'Área do Tutor'}.`,
+      role: resetRole
+    });
+  } catch (error) {
+    sendError(res, error);
+  }
+});
+
 app.post('/api/auth/register', async (req, res) => {
   try {
     const { user, role = 'tutor', terms } = req.body;
@@ -271,6 +369,24 @@ app.get('/api/me', requireAuth, (req, res) => {
     appointments: listAppointments({ userId: user.id }).map(addResponsibleEditInfo),
     notifications: listUnreadNotifications(user.id)
   });
+});
+
+app.patch('/api/me/email', requireAuth, (req, res) => {
+  try {
+    if (!['tutor', 'protetor'].includes(req.user.role)) {
+      throw httpError(403, 'Atualização disponível somente para tutores e protetores.');
+    }
+    const email = normalizeText(req.body?.email).toLowerCase();
+    if (!isValidEmail(email)) throw httpError(400, 'Informe um e-mail válido.');
+    db.prepare(`
+      UPDATE users
+      SET email = ?, updated_at = CURRENT_TIMESTAMP
+      WHERE id = ?
+    `).run(email, req.user.id);
+    res.json({ user: publicUser(getUserById(req.user.id)) });
+  } catch (error) {
+    sendError(res, error);
+  }
 });
 
 app.post('/api/me/notifications/:id/read', requireAuth, (req, res) => {
@@ -971,7 +1087,7 @@ app.put('/api/admin/appointments/:id/reschedule', requireAdmin, (req, res) => {
 
 app.get('/api/admin/users', requireAdmin, (_req, res) => {
   const users = db.prepare(`
-    SELECT u.id, u.name, u.cpf, u.phone, u.address, u.neighborhood, u.role, u.clinic_id, c.name AS clinic_name,
+    SELECT u.id, u.name, u.cpf, u.phone, u.email, u.address, u.neighborhood, u.role, u.clinic_id, c.name AS clinic_name,
       u.city_confirmed, u.adult_confirmed, u.pre_registered, u.active, u.created_at
     FROM users u
     LEFT JOIN clinics c ON c.id = u.clinic_id
@@ -1131,6 +1247,92 @@ function speciesLabel(species, sex) {
   return `${s} ${g}`;
 }
 
+function isValidEmail(value = '') {
+  return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(String(value).trim());
+}
+
+function hashPasswordResetToken(token = '') {
+  return crypto.createHash('sha256').update(String(token)).digest('hex');
+}
+
+function getValidPasswordReset(rawToken = '') {
+  const token = String(rawToken);
+  if (!/^[a-f0-9]{64}$/i.test(token)) return null;
+  return db.prepare(`
+    SELECT prt.id, prt.user_id, u.role
+    FROM password_reset_tokens prt
+    JOIN users u ON u.id = prt.user_id
+    WHERE prt.token_hash = ?
+      AND prt.used_at IS NULL
+      AND datetime(prt.expires_at) > datetime('now', 'localtime')
+      AND u.active = 1
+      AND u.role IN ('admin', 'tutor', 'protetor')
+  `).get(hashPasswordResetToken(token));
+}
+
+function getPublicBaseUrl(req) {
+  const configured = String(process.env.APP_BASE_URL || '').trim().replace(/\/+$/, '');
+  if (configured) {
+    const url = new URL(configured);
+    if (!['http:', 'https:'].includes(url.protocol)) throw new Error('APP_BASE_URL deve usar HTTP ou HTTPS.');
+    return url.origin + url.pathname.replace(/\/+$/, '');
+  }
+  if (process.env.NODE_ENV === 'production') {
+    throw new Error('APP_BASE_URL é obrigatório para enviar links de recuperação em produção.');
+  }
+  return `${req.protocol}://${req.get('host')}`;
+}
+
+function escapeEmailHtml(value = '') {
+  return String(value)
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#039;');
+}
+
+async function sendPasswordResetEmail(toEmail, userName, resetUrl, role = 'tutor') {
+  if (!smtpTransporter) throw new Error('Servidor SMTP não configurado.');
+  const fromAddress = process.env.SMTP_FROM || process.env.SMTP_USER;
+  if (!fromAddress) throw new Error('Remetente SMTP não configurado.');
+  const safeName = escapeEmailHtml(userName);
+  const safeUrl = escapeEmailHtml(resetUrl);
+  const accessArea = role === 'admin' ? 'Área Administrativa' : 'Área do Tutor';
+  const subject = `Redefinição de senha — ${accessArea}`;
+  const html = `
+    <div style="margin:0;padding:28px 12px;background:#f4f0e7;font-family:'DM Sans',Arial,sans-serif;color:#173c38">
+      <div style="max-width:600px;margin:0 auto">
+        <div style="padding:26px 30px;background:#08776b;border-radius:18px 18px 0 0">
+          <p style="margin:0;color:#ccebe6;font-size:12px;font-weight:700;letter-spacing:.1em;text-transform:uppercase">Programa Municipal · Nova Iguaçu</p>
+          <h1 style="margin:8px 0 0;color:#fff;font-family:Georgia,serif;font-size:26px;line-height:1.2">Castração Animal</h1>
+        </div>
+        <div style="padding:32px 30px;background:#fff;border:1px solid #d9e5df;border-top:0;border-radius:0 0 18px 18px">
+          <p style="margin:0 0 16px;font-size:16px">Olá, <strong>${safeName}</strong>!</p>
+          <p style="margin:0 0 22px;color:#55716d;line-height:1.6">Recebemos uma solicitação para criar uma nova senha de acesso à sua ${accessArea}.</p>
+          <div style="text-align:center;margin:28px 0">
+            <a href="${safeUrl}" style="display:inline-block;padding:14px 24px;color:#fff;background:#08776b;border-radius:10px;font-size:15px;font-weight:700;text-decoration:none">Criar nova senha</a>
+          </div>
+          <div style="padding:15px 17px;background:#fff8df;border:1px solid #ead48b;border-radius:10px;color:#725200;font-size:14px;line-height:1.5">
+            <strong>Este link é válido por ${PASSWORD_RESET_EXPIRY_MINUTES} minutos</strong> e poderá ser usado somente uma vez.
+          </div>
+          <p style="margin:24px 0 8px;color:#55716d;font-size:13px;line-height:1.5">Se o botão não abrir, copie e cole este endereço no navegador:</p>
+          <p style="margin:0;padding:12px;background:#edf6f3;border-radius:8px;color:#08776b;font-size:12px;line-height:1.5;word-break:break-all">${safeUrl}</p>
+          <p style="margin:24px 0 0;color:#718783;font-size:13px;line-height:1.5">Se você não solicitou esta alteração, ignore este e-mail. Sua senha atual continuará funcionando.</p>
+        </div>
+        <p style="margin:16px 0 0;text-align:center;color:#718783;font-size:12px">Secretaria Municipal de Defesa e Proteção dos Animais · Nova Iguaçu</p>
+      </div>
+    </div>
+  `;
+  await smtpTransporter.sendMail({
+    from: fromAddress,
+    to: toEmail,
+    subject,
+    text: `Olá, ${userName}!\n\nUse o link abaixo para criar uma nova senha da ${accessArea}:\n${resetUrl}\n\nO link é válido por ${PASSWORD_RESET_EXPIRY_MINUTES} minutos e só pode ser usado uma vez.\n\nSe você não solicitou a alteração, ignore este e-mail.`,
+    html
+  });
+}
+
 async function sendConfirmationEmail(toEmail, userName, appointment) {
   if (!smtpTransporter || !toEmail) return;
   const from = process.env.SMTP_FROM || process.env.SMTP_USER;
@@ -1219,7 +1421,7 @@ function parseUser(input = {}, role) {
     address: normalizeText(input.address),
     address_number: addressNumberMissing ? 'S/N' : normalizeText(input.addressNumber || input.address_number),
     neighborhood: normalizeText(input.neighborhood),
-    email: normalizeText(input.email || '')
+    email: normalizeText(input.email || '').toLowerCase()
   };
   if (!data.name) throw httpError(400, 'Informe o nome completo.');
   if (!isValidCpf(data.cpf)) throw httpError(400, 'CPF inválido. Verifique os dígitos informados.');
@@ -1228,7 +1430,7 @@ function parseUser(input = {}, role) {
   if (!data.address_number) throw httpError(400, 'Informe o número da residência ou marque a opção sem número.');
   if (!data.neighborhood && role !== 'protetor') throw httpError(400, 'Informe o bairro.');
   if (!data.phone) throw httpError(400, 'Informe o telefone.');
-  if (data.email && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(data.email)) throw httpError(400, 'E-mail inválido.');
+  if (!isValidEmail(data.email)) throw httpError(400, 'Informe um e-mail válido para criar seu acesso.');
   if (!input.cityAdultConfirmed) throw httpError(400, 'Confirme que reside em Nova Iguaçu e é maior de 18 anos.');
   if (!input.password || String(input.password).length < 6) throw httpError(400, 'A senha de acesso deve ter pelo menos 6 caracteres para ser criada.');
   return data;
@@ -1421,6 +1623,9 @@ async function parseSubstituteResponsible(input = {}) {
 async function createAutomaticAppointment(user, animalInput, terms, options = {}) {
   if (!['tutor', 'protetor', 'admin'].includes(user.role)) {
     throw httpError(403, 'Somente tutores, protetores cadastrados e administradores podem solicitar agendamento.');
+  }
+  if (['tutor', 'protetor'].includes(user.role) && !isValidEmail(user.email)) {
+    throw httpError(409, 'Atualize seu e-mail na Área do Tutor antes de realizar um agendamento.');
   }
   const animal = parseAnimal(animalInput);
   const responsible = await parseSubstituteResponsible(options.responsible);
@@ -1841,6 +2046,7 @@ function upsertAdminUser(input = {}) {
     name: normalizeText(input.name),
     cpf: normalizeCpf(input.cpf),
     phone: normalizePhone(input.phone),
+    email: normalizeText(input.email || '').toLowerCase(),
     address: normalizeText(input.address),
     neighborhood: normalizeText(input.neighborhood),
     clinic_id: role === 'clinica' ? clinicId : null,
@@ -1849,6 +2055,7 @@ function upsertAdminUser(input = {}) {
   };
   if (!data.name) throw httpError(400, 'Informe o nome.');
   if (!isValidCpf(data.cpf)) throw httpError(400, 'CPF inválido. Verifique os dígitos informados.');
+  if (data.email && !isValidEmail(data.email)) throw httpError(400, 'Informe um e-mail válido.');
   if (role === 'clinica' && !clinic) throw httpError(400, 'Selecione uma clínica cadastrada para este usuário.');
   const passwordHash = input.password ? bcrypt.hashSync(String(input.password), 12) : null;
   if (!id && role === 'clinica' && !passwordHash) throw httpError(400, 'Informe uma senha para o usuário da clínica.');
@@ -1858,18 +2065,18 @@ function upsertAdminUser(input = {}) {
     if (!current) throw httpError(404, 'Usuário não encontrado.');
     db.prepare(`
       UPDATE users
-      SET name = ?, cpf = ?, phone = ?, address = ?, neighborhood = ?, role = ?, clinic_id = ?, pre_registered = ?,
+      SET name = ?, cpf = ?, phone = ?, email = ?, address = ?, neighborhood = ?, role = ?, clinic_id = ?, pre_registered = ?,
         active = ?, password_hash = COALESCE(?, password_hash), updated_at = CURRENT_TIMESTAMP
       WHERE id = ?
-    `).run(data.name, data.cpf, data.phone, data.address, data.neighborhood, role, data.clinic_id, data.pre_registered, data.active, passwordHash, id);
+    `).run(data.name, data.cpf, data.phone, data.email, data.address, data.neighborhood, role, data.clinic_id, data.pre_registered, data.active, passwordHash, id);
     return getUserById(id);
   }
 
   const result = db.prepare(`
     INSERT INTO users
-      (name, cpf, password_hash, phone, address, neighborhood, role, clinic_id, city_confirmed, adult_confirmed, pre_registered, active)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, 1, 1, ?, ?)
-  `).run(data.name, data.cpf, passwordHash, data.phone, data.address, data.neighborhood, role, data.clinic_id, data.pre_registered, data.active);
+      (name, cpf, password_hash, phone, email, address, neighborhood, role, clinic_id, city_confirmed, adult_confirmed, pre_registered, active)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 1, 1, ?, ?)
+  `).run(data.name, data.cpf, passwordHash, data.phone, data.email, data.address, data.neighborhood, role, data.clinic_id, data.pre_registered, data.active);
   return getUserById(result.lastInsertRowid);
 }
 

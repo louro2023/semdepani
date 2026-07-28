@@ -17,6 +17,7 @@ import {
   KeyRound,
   LogIn,
   LogOut,
+  Mail,
   MessageCircle,
   PawPrint,
   Save,
@@ -127,7 +128,8 @@ async function request(path, options = {}, token) {
 }
 
 export default function App() {
-  const [view, setView] = useState('home');
+  const resetToken = new URLSearchParams(window.location.search).get('resetToken') || '';
+  const [view, setView] = useState(() => resetToken ? 'reset-password' : 'home');
   const [auth, setAuth] = useState(getStoredAuth);
   const [notice, setNotice] = useState('');
 
@@ -199,15 +201,23 @@ export default function App() {
 
         {view === 'usuario' ? (
           auth?.user?.role === 'protetor' || auth?.user?.role === 'tutor' ? (
-            <UserDashboard auth={auth} setView={setView} />
+            <UserDashboard auth={auth} setView={setView} onUserUpdated={(user) => setAuthState(auth.token, user)} />
           ) : (
             <LoginView title="Área do Tutor" expectedRole="usuario" destinationView="usuario" setAuth={setAuthState} setView={setView} />
           )
         ) : null}
 
+        {view === 'forgot-password' || view === 'forgot-password-admin' ? (
+          <ForgotPasswordView setView={setView} adminRecovery={view === 'forgot-password-admin'} />
+        ) : null}
+
+        {view === 'reset-password' ? (
+          <ResetPasswordView token={resetToken} setView={setView} />
+        ) : null}
+
         {view === 'protetor' ? (
           auth?.user?.role === 'protetor' ? (
-            <UserDashboard auth={auth} setView={setView} />
+            <UserDashboard auth={auth} setView={setView} onUserUpdated={(user) => setAuthState(auth.token, user)} />
           ) : (
             <LoginView title={title} expectedRole="protetor" setAuth={setAuthState} setView={setView} />
           )
@@ -371,6 +381,7 @@ function Wizard({ auth, onDone }) {
     addressNumberMissing: auth.user.address_number === 'S/N',
     neighborhood: auth.user.neighborhood || '',
     phone: auth.user.phone || '',
+    email: auth.user.email || '',
     password: '',
     cityAdultConfirmed: true
   } : emptyUser);
@@ -538,11 +549,12 @@ function Wizard({ auth, onDone }) {
 
   function validateStep(targetStep = step) {
     if (targetStep === 1 && isRegistrationFlow) {
-      if (!user.name || !user.cep || !user.address || (!user.addressNumber && !user.addressNumberMissing) || !user.neighborhood || !user.phone) return 'Preencha todos os campos obrigatórios da etapa do tutor.';
+      if (!user.name || !user.cep || !user.address || (!user.addressNumber && !user.addressNumberMissing) || !user.neighborhood || !user.phone || !user.email) return 'Preencha todos os campos obrigatórios da etapa do tutor.';
       if (cpfError) return cpfError;
       if (cepDigits.length !== 8) return 'Informe um CEP válido com 8 dígitos.';
       if (cepLookup.loading) return 'Aguarde a consulta do CEP para continuar.';
       if (cepLookup.error) return cepLookup.error;
+      if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(user.email)) return 'Informe um e-mail válido.';
       if (user.password.length < PASSWORD_MIN_LENGTH) return `A senha de acesso deve ter pelo menos ${PASSWORD_MIN_LENGTH} caracteres para ser criada.`;
       if (!user.cityAdultConfirmed) return 'Confirme que reside em Nova Iguaçu e é maior de 18 anos.';
     }
@@ -702,7 +714,7 @@ function Wizard({ auth, onDone }) {
                       </label>
                       <TextField label="Bairro" value={user.neighborhood} onChange={(value) => updateUser('neighborhood', value)} required />
                       <TextField label="Telefone" value={user.phone} onChange={(value) => updateUser('phone', value)} required />
-                      <TextField label="E-mail" value={user.email} onChange={(value) => updateUser('email', value)} type="email" hint="Use um e-mail de contato, se tiver" />
+                      <TextField label="E-mail" value={user.email} onChange={(value) => updateUser('email', value)} type="email" hint="Obrigatório para recuperar sua senha" required />
                       <TextField
                         label={`Senha de acesso (mínimo ${PASSWORD_MIN_LENGTH} caracteres)`}
                         value={user.password}
@@ -1067,6 +1079,11 @@ function LoginView({ title, expectedRole, destinationView, setAuth, setView }) {
         <button className="button primary full" type="submit" disabled={loading}>
           <LogIn size={18} /> {loading ? 'Entrando...' : 'Entrar'}
         </button>
+        {['usuario', 'admin'].includes(expectedRole) ? (
+          <button className="forgot-password-link" type="button" onClick={() => setView(expectedRole === 'admin' ? 'forgot-password-admin' : 'forgot-password')}>
+            <KeyRound size={16} /> Esqueci minha senha
+          </button>
+        ) : null}
         {expectedRole === 'protetor' ? (
           <p className="muted">
             Primeiro acesso de Protetor Cadastrado: solicite orientação pelo botão "Torne-se um Protetor Cadastrado" na página inicial ou pela administração do programa.
@@ -1076,6 +1093,159 @@ function LoginView({ title, expectedRole, destinationView, setAuth, setView }) {
         ) : (
           <p className="muted">Área restrita. Entre em contato com a administração para obter acesso.</p>
         )}
+      </form>
+    </section>
+  );
+}
+
+function ForgotPasswordView({ setView, adminRecovery = false }) {
+  const [cpf, setCpf] = useState('');
+  const [error, setError] = useState('');
+  const [message, setMessage] = useState('');
+  const [loading, setLoading] = useState(false);
+
+  async function submit(event) {
+    event.preventDefault();
+    setError('');
+    setMessage('');
+    if (onlyDigits(cpf).length !== CPF_DIGITS_LENGTH) {
+      setError('Informe um CPF válido com 11 dígitos.');
+      return;
+    }
+    setLoading(true);
+    try {
+      const data = await request('/auth/forgot-password', {
+        method: 'POST',
+        body: { cpf: onlyDigits(cpf) }
+      });
+      if (data.action === 'whatsapp' && data.whatsappUrl) {
+        window.location.assign(data.whatsappUrl);
+        return;
+      }
+      setMessage(data.message);
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  return (
+    <section className="auth-layout">
+      <form className="auth-panel password-recovery-panel" onSubmit={submit}>
+        <div className="auth-brand">
+          <div className="brand-mark"><img src="/brasao.png" alt="Brasão Nova Iguaçu" className="brand-brasao" /></div>
+        </div>
+        <div className="recovery-icon"><Mail size={24} /></div>
+        <div className="section-title compact">
+          <span className="eyebrow">{adminRecovery ? 'Área Administrativa' : 'Área do Tutor'}</span>
+          <h2>Recuperar senha</h2>
+          <p>Informe seu CPF. Enviaremos um link para o e-mail utilizado no cadastro.</p>
+        </div>
+        {error ? <InlineAlert message={error} /> : null}
+        {message ? <div className="inline-success"><CheckCircle2 size={18} />{message}</div> : null}
+        {!message ? (
+          <>
+            <TextField label="CPF" value={cpf} onChange={(value) => setCpf(maskCpf(value))} required inputMode="numeric" maxLength={14} />
+            <button className="button primary full" type="submit" disabled={loading}>
+              <Mail size={18} /> {loading ? 'Enviando...' : 'Enviar link de recuperação'}
+            </button>
+          </>
+        ) : null}
+        <button className="button ghost full" type="button" onClick={() => setView(adminRecovery ? 'admin' : 'usuario')}>
+          Voltar para o login
+        </button>
+      </form>
+    </section>
+  );
+}
+
+function ResetPasswordView({ token, setView }) {
+  const [password, setPassword] = useState('');
+  const [confirmation, setConfirmation] = useState('');
+  const [status, setStatus] = useState('checking');
+  const [error, setError] = useState('');
+  const [message, setMessage] = useState('');
+  const [accountRole, setAccountRole] = useState('tutor');
+
+  useEffect(() => {
+    if (!token) {
+      setStatus('invalid');
+      setError('Link de recuperação inválido.');
+      return;
+    }
+    request(`/auth/reset-password/${encodeURIComponent(token)}`)
+      .then((data) => {
+        setAccountRole(data.role || 'tutor');
+        setStatus('ready');
+      })
+      .catch((err) => {
+        setStatus('invalid');
+        setError(err.message);
+      });
+  }, [token]);
+
+  function returnToLogin() {
+    window.history.replaceState({}, '', window.location.pathname);
+    setView(accountRole === 'admin' ? 'admin' : 'usuario');
+  }
+
+  async function submit(event) {
+    event.preventDefault();
+    setError('');
+    if (password.length < PASSWORD_MIN_LENGTH) {
+      setError(`A nova senha deve ter pelo menos ${PASSWORD_MIN_LENGTH} caracteres.`);
+      return;
+    }
+    if (password !== confirmation) {
+      setError('A confirmação não corresponde à nova senha.');
+      return;
+    }
+    setStatus('saving');
+    try {
+      const data = await request('/auth/reset-password', {
+        method: 'POST',
+        body: { token, password }
+      });
+      window.history.replaceState({}, '', window.location.pathname);
+      setAccountRole(data.role || accountRole);
+      setMessage(data.message);
+      setStatus('success');
+    } catch (err) {
+      setError(err.message);
+      setStatus('ready');
+    }
+  }
+
+  return (
+    <section className="auth-layout">
+      <form className="auth-panel password-recovery-panel" onSubmit={submit}>
+        <div className="auth-brand">
+          <div className="brand-mark"><img src="/brasao.png" alt="Brasão Nova Iguaçu" className="brand-brasao" /></div>
+        </div>
+        <div className="recovery-icon"><KeyRound size={24} /></div>
+        <div className="section-title compact">
+          <span className="eyebrow">{accountRole === 'admin' ? 'Área Administrativa' : 'Área do Tutor'}</span>
+          <h2>Criar nova senha</h2>
+          <p>Escolha uma senha com pelo menos {PASSWORD_MIN_LENGTH} caracteres.</p>
+        </div>
+        {status === 'checking' ? <Loading label="Validando link" /> : null}
+        {error ? <InlineAlert message={error} /> : null}
+        {message ? <div className="inline-success"><CheckCircle2 size={18} />{message}</div> : null}
+        {status === 'ready' || status === 'saving' ? (
+          <>
+            <TextField label="Nova senha" value={password} onChange={setPassword} type="password" required />
+            <TextField label="Confirmar nova senha" value={confirmation} onChange={setConfirmation} type="password" required />
+            <button className="button primary full" type="submit" disabled={status === 'saving'}>
+              <KeyRound size={18} /> {status === 'saving' ? 'Salvando...' : 'Salvar nova senha'}
+            </button>
+          </>
+        ) : null}
+        {status === 'invalid' || status === 'success' ? (
+          <button className="button secondary full" type="button" onClick={returnToLogin}>
+            Ir para o login
+          </button>
+        ) : null}
       </form>
     </section>
   );
@@ -1105,7 +1275,7 @@ async function openDocument(userId, type, token) {
 }
 
 
-function UserDashboard({ auth, setView }) {
+function UserDashboard({ auth, setView, onUserUpdated }) {
   const [data, setData] = useState(null);
   const [error, setError] = useState('');
   const [editingResponsibleId, setEditingResponsibleId] = useState(null);
@@ -1148,6 +1318,18 @@ function UserDashboard({ auth, setView }) {
 
   if (error) return <InlineAlert message={error} />;
   if (!data) return <Loading label="Carregando área do usuário" />;
+  if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(data.user.email || '')) {
+    return (
+      <RequiredEmailUpdate
+        auth={auth}
+        user={data.user}
+        onSaved={(user) => {
+          setData((current) => ({ ...current, user }));
+          onUserUpdated?.(user);
+        }}
+      />
+    );
+  }
 
   const firstName = data.user.name ? data.user.name.split(' ')[0] : '';
   const limitLabel = data.limit === null ? 'Ilimitado' : data.limit;
@@ -1272,6 +1454,59 @@ function UserDashboard({ auth, setView }) {
         }) : <p className="muted">Nenhum agendamento encontrado.</p>}
       </div>
       {data.user.role === 'protetor' ? <ChangePasswordForm auth={auth} /> : null}
+    </section>
+  );
+}
+
+function RequiredEmailUpdate({ auth, user, onSaved }) {
+  const [email, setEmail] = useState('');
+  const [confirmation, setConfirmation] = useState('');
+  const [error, setError] = useState('');
+  const [saving, setSaving] = useState(false);
+
+  async function submit(event) {
+    event.preventDefault();
+    setError('');
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+      setError('Informe um e-mail válido.');
+      return;
+    }
+    if (email.trim().toLowerCase() !== confirmation.trim().toLowerCase()) {
+      setError('A confirmação não corresponde ao e-mail informado.');
+      return;
+    }
+    setSaving(true);
+    try {
+      const data = await request('/me/email', {
+        method: 'PATCH',
+        body: { email: email.trim().toLowerCase() }
+      }, auth.token);
+      onSaved(data.user);
+    } catch (err) {
+      setError(err.message);
+      setSaving(false);
+    }
+  }
+
+  return (
+    <section className="auth-layout">
+      <form className="auth-panel required-email-panel" onSubmit={submit}>
+        <div className="auth-brand">
+          <div className="brand-mark"><img src="/brasao.png" alt="Brasão Nova Iguaçu" className="brand-brasao" /></div>
+        </div>
+        <div className="recovery-icon"><Mail size={24} /></div>
+        <div className="section-title compact">
+          <span className="eyebrow">Atualização obrigatória</span>
+          <h2>Vincule seu e-mail</h2>
+          <p>Olá, {user.name?.split(' ')[0] || 'tutor'}. Precisamos do seu e-mail para proteger seu acesso e permitir a recuperação da senha.</p>
+        </div>
+        {error ? <InlineAlert message={error} /> : null}
+        <TextField label="E-mail" value={email} onChange={setEmail} type="email" required />
+        <TextField label="Confirmar e-mail" value={confirmation} onChange={setConfirmation} type="email" required />
+        <button className="button primary full" type="submit" disabled={saving}>
+          <Save size={18} /> {saving ? 'Salvando...' : 'Salvar e continuar'}
+        </button>
+      </form>
     </section>
   );
 }
@@ -3726,6 +3961,7 @@ function UserManager({ title, users, clinics, reload, auth, defaultRole }) {
     name: '',
     cpf: '',
     phone: '',
+    email: '',
     address: '',
     neighborhood: '',
     role: defaultRole,
@@ -3815,7 +4051,7 @@ function UserManager({ title, users, clinics, reload, auth, defaultRole }) {
     const search = normalizeSearch(filters.search);
     const searchDigits = onlyDigits(filters.search);
     return users.filter((user) => {
-      const searchable = normalizeSearch(`${user.name || ''} ${user.cpf || ''} ${user.phone || ''}`);
+      const searchable = normalizeSearch(`${user.name || ''} ${user.cpf || ''} ${user.phone || ''} ${user.email || ''}`);
       const searchableDigits = onlyDigits(`${user.cpf || ''} ${user.phone || ''}`);
       const status = user.active ? 'ativo' : 'inativo';
       return (
@@ -3841,6 +4077,7 @@ function UserManager({ title, users, clinics, reload, auth, defaultRole }) {
       name: user.name || '',
       cpf: user.cpf || '',
       phone: user.phone || '',
+      email: user.email || '',
       address: user.address || '',
       neighborhood: user.neighborhood || '',
       role: user.role || defaultRole,
@@ -3894,6 +4131,7 @@ function UserManager({ title, users, clinics, reload, auth, defaultRole }) {
         <TextField label="Nome" value={form.name} onChange={(value) => setForm({ ...form, name: value })} required />
         <TextField label="CPF" value={form.cpf} onChange={(value) => setForm({ ...form, cpf: value })} required />
         <TextField label="Telefone" value={form.phone} onChange={(value) => setForm({ ...form, phone: value })} />
+        <TextField label="E-mail" value={form.email} onChange={(value) => setForm({ ...form, email: value })} type="email" hint="Usado na recuperação de senha do tutor" />
         <TextField label="Endereço" value={form.address} onChange={(value) => setForm({ ...form, address: value })} />
         <TextField label="Bairro" value={form.neighborhood} onChange={(value) => setForm({ ...form, neighborhood: value })} />
         <label className="field">
@@ -3947,7 +4185,7 @@ function UserManager({ title, users, clinics, reload, auth, defaultRole }) {
         {error ? <InlineAlert message={error} /> : null}
       </div>
       <div className="filter-bar" aria-label="Filtros de usuários">
-        <TextField label="Nome, CPF ou telefone" value={filters.search} onChange={(value) => setFilters({ ...filters, search: value })} />
+        <TextField label="Nome, CPF, telefone ou e-mail" value={filters.search} onChange={(value) => setFilters({ ...filters, search: value })} />
         <label className="field">
           <span>Tipo</span>
           <select value={filters.role} onChange={(event) => setFilters({ ...filters, role: event.target.value })}>
@@ -3997,12 +4235,13 @@ function UserManager({ title, users, clinics, reload, auth, defaultRole }) {
         )}
       </div>
       <DataTable
-        columns={['', 'Nome', 'CPF', 'Telefone', 'Tipo', 'Clínica', 'Status', 'Ações']}
+        columns={['', 'Nome', 'CPF', 'Telefone', 'E-mail', 'Tipo', 'Clínica', 'Status', 'Ações']}
         rows={pagedUsers.map((user) => [
           <input key={`chk-${user.id}`} type="checkbox" checked={selectedIds.has(user.id)} onChange={() => toggleSelected(user.id)} />,
           user.name,
           maskCpf(user.cpf),
           user.phone || '-',
+          user.email || <span key={`email-${user.id}`} className="missing-email-label">Não cadastrado</span>,
           user.role,
           user.clinic_name || '-',
           user.active ? 'Ativo' : 'Inativo',
