@@ -2901,6 +2901,7 @@ function ClinicsTab({ clinics, reload, auth }) {
 
 const SLOTS_PAGE_SIZE = 20;
 const SLOT_LOGS_PAGE_SIZE = 30;
+const APPOINTMENTS_PAGE_SIZE = 50;
 const SLOT_LOG_ACTIONS = {
   created: ['Criada', 'created'],
   renewed: ['Renovada', 'renewed'],
@@ -3821,6 +3822,33 @@ function AppointmentsTab({ appointments, slots = [], clinics = [], reload, auth 
   const [rowErrors, setRowErrors] = useState({});
   const [rowMessages, setRowMessages] = useState({});
   const [rescheduling, setRescheduling] = useState(null);
+  const [filters, setFilters] = useState({ tutor: '', month: '', status: '' });
+  const [page, setPage] = useState(1);
+  const isAdmin = auth.user.role === 'admin';
+
+  const monthOptions = useMemo(() => (
+    [...new Set(appointments.map((appointment) => String(appointment.date || '').slice(0, 7)).filter((month) => /^\d{4}-\d{2}$/.test(month)))]
+      .sort()
+      .reverse()
+  ), [appointments]);
+
+  const filteredAppointments = useMemo(() => {
+    if (!isAdmin) return appointments;
+    const tutor = normalizeSearch(filters.tutor);
+    return appointments.filter((appointment) => (
+      (!tutor || normalizeSearch(`${appointment.user_name || ''} ${appointment.user_cpf || ''}`).includes(tutor)) &&
+      (!filters.month || String(appointment.date || '').slice(0, 7) === filters.month) &&
+      (!filters.status || appointment.status === filters.status)
+    ));
+  }, [appointments, filters, isAdmin]);
+
+  useEffect(() => { setPage(1); }, [filters]);
+
+  const totalPages = isAdmin ? Math.max(1, Math.ceil(filteredAppointments.length / APPOINTMENTS_PAGE_SIZE)) : 1;
+  const safePage = Math.min(page, totalPages);
+  const visibleAppointments = isAdmin
+    ? filteredAppointments.slice((safePage - 1) * APPOINTMENTS_PAGE_SIZE, safePage * APPOINTMENTS_PAGE_SIZE)
+    : filteredAppointments;
 
   function draftFor(appointment) {
     return drafts[appointment.id] || { status: appointment.status, reason: appointment.reason || '', microchip: appointment.microchip || '' };
@@ -3877,10 +3905,50 @@ function AppointmentsTab({ appointments, slots = [], clinics = [], reload, auth 
 
   return (
     <div className="admin-section">
+      {isAdmin ? (
+        <>
+          <div className="filter-bar appointments-filters" aria-label="Filtros dos agendamentos">
+            <TextField
+              label="Nome do Tutor"
+              value={filters.tutor}
+              onChange={(value) => setFilters({ ...filters, tutor: value })}
+            />
+            <label className="field">
+              <span>Mês</span>
+              <select value={filters.month} onChange={(event) => setFilters({ ...filters, month: event.target.value })}>
+                <option value="">Todos os meses</option>
+                {monthOptions.map((month) => (
+                  <option key={month} value={month}>{formatMonthYear(month)}</option>
+                ))}
+              </select>
+            </label>
+            <label className="field">
+              <span>Status</span>
+              <select value={filters.status} onChange={(event) => setFilters({ ...filters, status: event.target.value })}>
+                <option value="">Todos os status</option>
+                {APPOINTMENT_STATUS_OPTIONS.map(([value, label]) => (
+                  <option key={value} value={value}>{label}</option>
+                ))}
+              </select>
+            </label>
+            <button className="button ghost filter-clear-button" type="button" onClick={() => setFilters({ tutor: '', month: '', status: '' })}>
+              <XCircle size={17} /> Limpar filtros
+            </button>
+            <span className="filter-count">
+              {filteredAppointments.length === appointments.length
+                ? `${appointments.length} agendamento${appointments.length !== 1 ? 's' : ''}`
+                : `${filteredAppointments.length} de ${appointments.length} agendamentos`}
+            </span>
+          </div>
+          <div className="appointments-page-summary">
+            Exibindo {filteredAppointments.length ? (safePage - 1) * APPOINTMENTS_PAGE_SIZE + 1 : 0}–{Math.min(safePage * APPOINTMENTS_PAGE_SIZE, filteredAppointments.length)} de {filteredAppointments.length}
+          </div>
+        </>
+      ) : null}
       <DataTable
         className="appointments-table"
         columns={['Tutor', 'Contato', 'Responsável no atendimento', 'Animal', 'Horário', 'Documentos', 'Status', 'Microchip', 'Motivo', 'Ação']}
-        rows={appointments.map((appointment) => {
+        rows={visibleAppointments.map((appointment) => {
           const draft = draftFor(appointment);
           return [
             appointment.user_name,
@@ -3951,6 +4019,7 @@ function AppointmentsTab({ appointments, slots = [], clinics = [], reload, auth 
           ];
         })}
       />
+      {isAdmin ? <Pagination page={safePage} totalPages={totalPages} onChange={setPage} /> : null}
     </div>
   );
 }

@@ -85,6 +85,7 @@ dist/               Build Vite, gerado localmente/producao
 - Auditoria administrativa de vagas com filtros por acao, clinica, mes, administrador e data.
 - Criacao de vagas protegida contra insercoes automaticas ou sem autoria administrativa.
 - Remarcacao administrativa de agendamentos com troca transacional de vaga e notificacao ao tutor.
+- Aba Agendamentos do admin com filtros por tutor, mes e status, alem de paginacao de 50 registros.
 - E-mail obrigatorio em novos cadastros; usuarios antigos sem e-mail precisam atualiza-lo depois do login.
 - Administrador pode cadastrar ou corrigir o e-mail na aba Usuarios.
 - Recuperacao de senha por token de uso unico para tutor, protetor e administrador.
@@ -369,6 +370,13 @@ Comportamento atual:
   - Nome do tutor.
 - Status, mes e tutor sao filtros aplicados no frontend sobre a lista carregada.
 - O botao de limpar filtros volta a exibicao para todos os resultados permitidos pelo perfil.
+
+### Area Admin - Agendamentos
+
+- Exibe 50 agendamentos por pagina.
+- Permite filtrar por nome do tutor, mes e status.
+- Os filtros sao aplicados sobre todos os agendamentos carregados antes da paginacao, portanto encontram resultados que estavam em qualquer pagina.
+- Alterar ou limpar um filtro retorna automaticamente para a primeira pagina dos resultados.
 
 ### Area Admin - Vagas
 
