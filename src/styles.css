@@ -1581,7 +1581,8 @@ select:focus,
   background: #dbf5ea;
 }
 
-.status-badge.audit-updated {
+.status-badge.audit-updated,
+.status-badge.audit-rescheduled {
   color: #18568a;
   background: #e2f1ff;
 }
@@ -1711,6 +1712,23 @@ select:focus,
   margin-bottom: 0;
 }
 
+.audit-environment {
+  display: grid;
+  gap: 14px;
+}
+
+.audit-subtabs {
+  justify-self: start;
+}
+
+.admin-audit-filters {
+  grid-template-columns: minmax(190px, 0.8fr) minmax(210px, 1fr) minmax(240px, 1.2fr) minmax(190px, 0.8fr) auto;
+}
+
+.admin-audit-table table {
+  min-width: 1280px;
+}
+
 .slot-logs-filters {
   grid-template-columns:
     minmax(180px, 0.8fr)
@@ -1722,7 +1740,8 @@ select:focus,
 }
 
 @media (max-width: 1360px) {
-  .slot-logs-filters {
+  .slot-logs-filters,
+  .admin-audit-filters {
     grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
   }
 }

@@ -186,6 +186,31 @@ export function initSchema() {
       created_at TEXT NOT NULL DEFAULT (datetime('now', 'localtime'))
     );
 
+    CREATE TABLE IF NOT EXISTS admin_audit_logs (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      action TEXT NOT NULL CHECK (action IN ('email_changed', 'appointment_rescheduled')),
+      actor_user_id INTEGER REFERENCES users(id) ON DELETE SET NULL,
+      actor_name TEXT NOT NULL,
+      actor_cpf TEXT,
+      target_user_id INTEGER REFERENCES users(id) ON DELETE SET NULL,
+      target_user_name TEXT,
+      target_user_cpf TEXT,
+      appointment_id INTEGER REFERENCES appointments(id) ON DELETE SET NULL,
+      protocol TEXT,
+      old_email TEXT,
+      new_email TEXT,
+      old_slot_id INTEGER,
+      old_date TEXT,
+      old_time TEXT,
+      old_clinic TEXT,
+      new_slot_id INTEGER,
+      new_date TEXT,
+      new_time TEXT,
+      new_clinic TEXT,
+      details TEXT,
+      event_at TEXT NOT NULL DEFAULT (datetime('now', 'localtime'))
+    );
+
     CREATE INDEX IF NOT EXISTS idx_slot_audit_logs_event_at
       ON slot_audit_logs(event_at DESC, id DESC);
     CREATE INDEX IF NOT EXISTS idx_slot_audit_logs_slot_id
@@ -194,6 +219,12 @@ export function initSchema() {
       ON user_notifications(user_id, read_at, created_at DESC);
     CREATE INDEX IF NOT EXISTS idx_password_reset_tokens_lookup
       ON password_reset_tokens(token_hash, expires_at, used_at);
+    CREATE INDEX IF NOT EXISTS idx_admin_audit_logs_event_at
+      ON admin_audit_logs(event_at DESC, id DESC);
+    CREATE INDEX IF NOT EXISTS idx_admin_audit_logs_action
+      ON admin_audit_logs(action, event_at DESC);
+    CREATE INDEX IF NOT EXISTS idx_admin_audit_logs_target_user
+      ON admin_audit_logs(target_user_id, event_at DESC);
   `);
 
   migrateUsersForClinicRole();

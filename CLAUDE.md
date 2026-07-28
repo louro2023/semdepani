@@ -88,6 +88,7 @@ dist/               Build Vite, gerado localmente/producao
 - E-mail obrigatorio em novos cadastros; usuarios antigos sem e-mail precisam atualiza-lo depois do login.
 - Administrador pode cadastrar ou corrigir o e-mail na aba Usuarios.
 - Recuperacao de senha por token de uso unico para tutor, protetor e administrador.
+- Auditoria geral registra alteracoes administrativas de e-mail e remarcacoes com valores anteriores e novos.
 
 ---
 
@@ -161,6 +162,7 @@ Outras tabelas:
 - `slot_audit_logs`: historico imutavel de criacao, renovacao, edicao, desativacao, exclusao e publicacao de vagas, com administrador e fotografia dos dados no momento da acao. Registra somente acoes ocorridas depois da implantacao da auditoria; vagas antigas nao sao importadas retroativamente.
 - `user_notifications`: notificacoes persistentes do usuario, incluindo remarcacoes administrativas com dados anteriores e novos.
 - `password_reset_tokens`: hashes dos tokens de recuperacao, prazo de validade e momento de uso. Nunca armazena o token bruto.
+- `admin_audit_logs`: auditoria de alteracoes de e-mail e remarcacoes, com administrador, usuario afetado, protocolo e dados anteriores/novos.
 
 ### Migracoes Automaticas Existentes
 
@@ -494,6 +496,7 @@ O SQLite tambem protege a tabela com triggers de auditoria. Novas vagas precisam
 | GET | `/api/admin/slots/releases` | Listar estado de publicacao de todos os meses com vagas |
 | PUT | `/api/admin/slots/releases/:month` | Publicar agora, ocultar ou agendar a publicacao de um mes |
 | GET | `/api/admin/slot-logs` | Listar o historico administrativo de vagas e publicacoes |
+| GET | `/api/admin/audit-logs` | Listar alteracoes de e-mail e remarcacoes feitas por administradores |
 | POST | `/api/admin/slots/renew` | Renovar vagas selecionadas com novos dados |
 | GET/POST/PUT | `/api/admin/users` | CRUD usuarios, incluindo cadastro/correcao de e-mail |
 | POST | `/api/admin/users/import` | Importar Excel/CSV de protetores |

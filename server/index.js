@@ -891,6 +891,15 @@ app.get('/api/admin/slot-logs', requireAdmin, (_req, res) => {
   res.json({ logs });
 });
 
+app.get('/api/admin/audit-logs', requireAdmin, (_req, res) => {
+  const logs = db.prepare(`
+    SELECT *
+    FROM admin_audit_logs
+    ORDER BY datetime(event_at) DESC, id DESC
+  `).all();
+  res.json({ logs });
+});
+
 app.post('/api/admin/slots/renew', requireAdmin, (req, res) => {
   try {
     const renewals = Array.isArray(req.body.renewals) ? req.body.renewals : null;
@@ -1078,7 +1087,7 @@ app.patch('/api/admin/appointments/:id/status', requireAppointmentManager, (req,
 
 app.put('/api/admin/appointments/:id/reschedule', requireAdmin, (req, res) => {
   try {
-    const appointment = rescheduleAppointment(req.params.id, req.body?.slotId);
+    const appointment = rescheduleAppointment(req.params.id, req.body?.slotId, req.user);
     res.json({ appointment });
   } catch (error) {
     sendError(res, error);
@@ -1098,7 +1107,23 @@ app.get('/api/admin/users', requireAdmin, (_req, res) => {
 
 app.post('/api/admin/users', requireAdmin, (req, res) => {
   try {
-    const user = upsertAdminUser(req.body);
+    db.exec('BEGIN IMMEDIATE');
+    let user;
+    try {
+      user = upsertAdminUser(req.body);
+      if (user.email) {
+        auditAdminAction('email_changed', req.user, {
+          targetUser: user,
+          oldEmail: '',
+          newEmail: user.email,
+          details: 'E-mail informado pelo administrador durante o cadastro do usuário.'
+        });
+      }
+      db.exec('COMMIT');
+    } catch (error) {
+      db.exec('ROLLBACK');
+      throw error;
+    }
     res.status(201).json({ user: publicUser(user) });
   } catch (error) {
     sendError(res, error);
@@ -1107,7 +1132,25 @@ app.post('/api/admin/users', requireAdmin, (req, res) => {
 
 app.put('/api/admin/users/:id', requireAdmin, (req, res) => {
   try {
-    const user = upsertAdminUser({ ...req.body, id: Number(req.params.id) });
+    const previous = getUserById(req.params.id);
+    if (!previous) throw httpError(404, 'Usuário não encontrado.');
+    db.exec('BEGIN IMMEDIATE');
+    let user;
+    try {
+      user = upsertAdminUser({ ...req.body, id: Number(req.params.id) });
+      if (normalizeText(previous.email || '').toLowerCase() !== normalizeText(user.email || '').toLowerCase()) {
+        auditAdminAction('email_changed', req.user, {
+          targetUser: user,
+          oldEmail: previous.email || '',
+          newEmail: user.email || '',
+          details: previous.email ? 'E-mail corrigido pelo administrador.' : 'E-mail vinculado pelo administrador.'
+        });
+      }
+      db.exec('COMMIT');
+    } catch (error) {
+      db.exec('ROLLBACK');
+      throw error;
+    }
     res.json({ user: publicUser(user) });
   } catch (error) {
     sendError(res, error);
@@ -1846,7 +1889,7 @@ function listUnreadNotifications(userId) {
   `).all(userId);
 }
 
-function rescheduleAppointment(appointmentIdValue, targetSlotIdValue) {
+function rescheduleAppointment(appointmentIdValue, targetSlotIdValue, actor) {
   const appointmentId = Number(appointmentIdValue);
   const targetSlotId = Number(targetSlotIdValue);
   if (!Number.isInteger(appointmentId) || appointmentId <= 0) {
@@ -1861,11 +1904,14 @@ function rescheduleAppointment(appointmentIdValue, targetSlotIdValue) {
     const appointment = db.prepare(`
       SELECT
         a.id, a.user_id, a.slot_id, a.status, a.protocol,
+        target_user.name AS target_user_name,
+        target_user.cpf AS target_user_cpf,
         an.species, an.sex,
         old_slot.date AS old_date,
         old_slot.time AS old_time,
         COALESCE(old_clinic.name, old_slot.clinic) AS old_clinic
       FROM appointments a
+      JOIN users target_user ON target_user.id = a.user_id
       JOIN animals an ON an.id = a.animal_id
       JOIN slots old_slot ON old_slot.id = a.slot_id
       LEFT JOIN clinics old_clinic ON old_clinic.id = old_slot.clinic_id
@@ -1940,6 +1986,25 @@ function rescheduleAppointment(appointmentIdValue, targetSlotIdValue) {
       target.time,
       target.clinic
     );
+
+    auditAdminAction('appointment_rescheduled', actor, {
+      targetUser: {
+        id: appointment.user_id,
+        name: appointment.target_user_name,
+        cpf: appointment.target_user_cpf
+      },
+      appointmentId: appointment.id,
+      protocol: appointment.protocol,
+      oldSlotId: appointment.slot_id,
+      oldDate: appointment.old_date,
+      oldTime: appointment.old_time,
+      oldClinic: appointment.old_clinic,
+      newSlotId: target.id,
+      newDate: target.date,
+      newTime: target.time,
+      newClinic: target.clinic,
+      details: 'Clínica, data ou horário alterado pelo administrador.'
+    });
 
     db.exec('COMMIT');
     return getAppointmentDetails(appointment.id);
@@ -2093,6 +2158,41 @@ function getSlot(id) {
     WHERE s.id = ?
   `).get(id);
   return slot ? { ...slot, label: animalTypeLabel(slot.species, slot.sex) } : null;
+}
+
+function auditAdminAction(action, actor, data = {}) {
+  db.prepare(`
+    INSERT INTO admin_audit_logs (
+      action, actor_user_id, actor_name, actor_cpf,
+      target_user_id, target_user_name, target_user_cpf,
+      appointment_id, protocol,
+      old_email, new_email,
+      old_slot_id, old_date, old_time, old_clinic,
+      new_slot_id, new_date, new_time, new_clinic,
+      details
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+  `).run(
+    action,
+    actor?.id ?? null,
+    actor?.name || 'Administrador não identificado',
+    actor?.cpf || null,
+    data.targetUser?.id ?? null,
+    data.targetUser?.name || null,
+    data.targetUser?.cpf || null,
+    data.appointmentId ?? null,
+    data.protocol || null,
+    data.oldEmail ?? null,
+    data.newEmail ?? null,
+    data.oldSlotId ?? null,
+    data.oldDate || null,
+    data.oldTime || null,
+    data.oldClinic || null,
+    data.newSlotId ?? null,
+    data.newDate || null,
+    data.newTime || null,
+    data.newClinic || null,
+    data.details || null
+  );
 }
 
 function auditSlotAction(action, actor, slot, options = {}) {

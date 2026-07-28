@@ -1897,7 +1897,7 @@ function AdminPanel({ auth }) {
           ['clinics', Building2, 'Clínicas'],
           ['slots', Calendar, 'Vagas'],
           ['appointments', ClipboardCheck, 'Agendamentos'],
-          ['logs', History, 'Logs de vagas'],
+          ['logs', History, 'Auditoria'],
           ['users', Users, 'Usuários'],
           ['protectors', Shield, 'Protetores Cadastrados'],
           ['reports', BarChart2, 'Relatórios']
@@ -1912,7 +1912,7 @@ function AdminPanel({ auth }) {
       {tab === 'clinics' ? <ClinicsTab clinics={clinics} reload={loadAll} auth={auth} /> : null}
       {tab === 'slots' ? <SlotsTab slots={slots} clinics={clinics} reload={loadAll} auth={auth} /> : null}
       {tab === 'appointments' ? <AppointmentsTab appointments={appointments} slots={slots} clinics={clinics} reload={loadAll} auth={auth} /> : null}
-      {tab === 'logs' ? <SlotLogsTab auth={auth} /> : null}
+      {tab === 'logs' ? <AuditLogsTab auth={auth} /> : null}
       {tab === 'users' ? <UsersTab users={users} clinics={clinics} reload={loadAll} auth={auth} /> : null}
       {tab === 'protectors' ? <ProtectorsTab protectors={protectors} clinics={clinics} reload={loadAll} auth={auth} /> : null}
       {tab === 'reports' ? <ReportsTab reports={reports} /> : null}
@@ -2912,6 +2912,143 @@ const SLOT_LOG_ACTIONS = {
   month_hidden: ['Mês ocultado', 'hidden'],
   system_blocked: ['Criação automática bloqueada', 'blocked']
 };
+const ADMIN_AUDIT_ACTIONS = {
+  email_changed: ['E-mail alterado', 'updated'],
+  appointment_rescheduled: ['Agendamento remarcado', 'rescheduled']
+};
+
+function AuditLogsTab({ auth }) {
+  const [section, setSection] = useState('administrative');
+  return (
+    <div className="audit-environment">
+      <div className="tabs audit-subtabs" role="tablist" aria-label="Seções da auditoria">
+        <button className={section === 'administrative' ? 'active' : ''} type="button" onClick={() => setSection('administrative')}>
+          <Shield size={17} /> Ações administrativas
+        </button>
+        <button className={section === 'slots' ? 'active' : ''} type="button" onClick={() => setSection('slots')}>
+          <Calendar size={17} /> Vagas e publicações
+        </button>
+      </div>
+      {section === 'administrative' ? <AdminAuditLogsTab auth={auth} /> : <SlotLogsTab auth={auth} />}
+    </div>
+  );
+}
+
+function AdminAuditLogsTab({ auth }) {
+  const [logs, setLogs] = useState([]);
+  const [filters, setFilters] = useState({ action: '', actor: '', target: '', date: '' });
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState('');
+  const [page, setPage] = useState(1);
+
+  useEffect(() => {
+    let cancelled = false;
+    request('/admin/audit-logs', {}, auth.token)
+      .then((data) => {
+        if (!cancelled) {
+          setLogs(data.logs || []);
+          setError('');
+        }
+      })
+      .catch((err) => {
+        if (!cancelled) setError(err.message);
+      })
+      .finally(() => {
+        if (!cancelled) setLoading(false);
+      });
+    return () => { cancelled = true; };
+  }, [auth.token]);
+
+  const filteredLogs = useMemo(() => {
+    const filterDate = toIsoDate(filters.date);
+    const actor = normalizeSearch(filters.actor);
+    const target = normalizeSearch(filters.target);
+    return logs.filter((log) => (
+      (!filters.action || log.action === filters.action) &&
+      (!filterDate || String(log.event_at || '').slice(0, 10) === filterDate) &&
+      (!actor || normalizeSearch(`${log.actor_name || ''} ${log.actor_cpf || ''}`).includes(actor)) &&
+      (!target || normalizeSearch(`${log.target_user_name || ''} ${log.target_user_cpf || ''} ${log.protocol || ''}`).includes(target))
+    ));
+  }, [logs, filters]);
+
+  useEffect(() => { setPage(1); }, [filters]);
+
+  const totalPages = Math.max(1, Math.ceil(filteredLogs.length / SLOT_LOGS_PAGE_SIZE));
+  const safePage = Math.min(page, totalPages);
+  const pagedLogs = filteredLogs.slice((safePage - 1) * SLOT_LOGS_PAGE_SIZE, safePage * SLOT_LOGS_PAGE_SIZE);
+
+  return (
+    <div className="admin-section slot-logs-section">
+      <div className="section-title compact">
+        <span className="eyebrow">Auditoria administrativa</span>
+        <h3>E-mails e remarcações</h3>
+        <p>Consulte alterações de e-mail e remarcações realizadas por administradores.</p>
+      </div>
+      {error ? <InlineAlert message={error} /> : null}
+      <div className="filter-bar admin-audit-filters">
+        <label className="field">
+          <span>Ação</span>
+          <select value={filters.action} onChange={(event) => setFilters({ ...filters, action: event.target.value })}>
+            <option value="">Todas</option>
+            {Object.entries(ADMIN_AUDIT_ACTIONS).map(([value, [label]]) => (
+              <option key={value} value={value}>{label}</option>
+            ))}
+          </select>
+        </label>
+        <TextField label="Administrador" value={filters.actor} onChange={(value) => setFilters({ ...filters, actor: value })} />
+        <TextField label="Tutor, CPF ou protocolo" value={filters.target} onChange={(value) => setFilters({ ...filters, target: value })} />
+        <DateField label="Data da ação" value={filters.date} onChange={(value) => setFilters({ ...filters, date: value })} />
+        <button className="button ghost filter-clear-button" type="button" onClick={() => setFilters({ action: '', actor: '', target: '', date: '' })}>
+          <XCircle size={17} /> Limpar filtros
+        </button>
+      </div>
+      <div className="slot-logs-count">
+        <strong>{filteredLogs.length}</strong> evento{filteredLogs.length !== 1 ? 's' : ''} encontrado{filteredLogs.length !== 1 ? 's' : ''}
+      </div>
+      {loading ? <Loading label="Carregando auditoria" /> : (
+        <>
+          <DataTable
+            className="slot-logs-table admin-audit-table"
+            columns={['Data da ação', 'Ação', 'Administrador', 'Usuário afetado', 'Antes', 'Depois', 'Observação']}
+            rows={pagedLogs.map((log) => {
+              const [actionLabel, actionClass] = ADMIN_AUDIT_ACTIONS[log.action] || [log.action, 'updated'];
+              const emailChange = log.action === 'email_changed';
+              return [
+                <strong key={`date-${log.id}`}>{formatReleaseDateTime(log.event_at)}</strong>,
+                <StatusBadge key={`action-${log.id}`} status={`audit-${actionClass}`} label={actionLabel} />,
+                <div key={`actor-${log.id}`} className="slot-log-actor">
+                  <strong>{log.actor_name}</strong>
+                  {log.actor_cpf ? <span>CPF {maskCpf(log.actor_cpf)}</span> : null}
+                </div>,
+                <div key={`target-${log.id}`} className="slot-log-subject">
+                  <strong>{log.target_user_name || '-'}</strong>
+                  {log.target_user_cpf ? <span>CPF {maskCpf(log.target_user_cpf)}</span> : null}
+                  {log.protocol ? <span>Protocolo {log.protocol}</span> : null}
+                </div>,
+                emailChange ? (log.old_email || 'Sem e-mail') : (
+                  <div key={`before-${log.id}`} className="slot-log-subject">
+                    <strong>{formatDate(log.old_date)} às {log.old_time}</strong>
+                    <span>{log.old_clinic}</span>
+                    {log.old_slot_id ? <span>Vaga #{log.old_slot_id}</span> : null}
+                  </div>
+                ),
+                emailChange ? (log.new_email || 'E-mail removido') : (
+                  <div key={`after-${log.id}`} className="slot-log-subject">
+                    <strong>{formatDate(log.new_date)} às {log.new_time}</strong>
+                    <span>{log.new_clinic}</span>
+                    {log.new_slot_id ? <span>Vaga #{log.new_slot_id}</span> : null}
+                  </div>
+                ),
+                log.details || '-'
+              ];
+            })}
+          />
+          <Pagination page={safePage} totalPages={totalPages} onChange={setPage} />
+        </>
+      )}
+    </div>
+  );
+}
 
 function formatSlotLogObservation(log) {
   const details = String(log.details || '').trim();
