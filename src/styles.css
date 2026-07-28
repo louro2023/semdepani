@@ -1487,7 +1487,8 @@ select:focus,
 }
 
 .status-badge.audit-deactivated,
-.status-badge.audit-deleted {
+.status-badge.audit-deleted,
+.status-badge.audit-blocked {
   color: #842018;
   background: #ffe0da;
 }

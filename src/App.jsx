@@ -2633,7 +2633,8 @@ const SLOT_LOG_ACTIONS = {
   deleted: ['Excluída definitivamente', 'deleted'],
   month_published: ['Mês publicado', 'published'],
   month_scheduled: ['Publicação agendada', 'scheduled'],
-  month_hidden: ['Mês ocultado', 'hidden']
+  month_hidden: ['Mês ocultado', 'hidden'],
+  system_blocked: ['Criação automática bloqueada', 'blocked']
 };
 
 function formatSlotLogObservation(log) {

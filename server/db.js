@@ -90,6 +90,9 @@ export function initSchema() {
       clinic_id INTEGER REFERENCES clinics(id),
       clinic TEXT NOT NULL,
       active INTEGER NOT NULL DEFAULT 1,
+      created_by_user_id INTEGER REFERENCES users(id) ON DELETE SET NULL,
+      creation_source TEXT,
+      renewed_from_slot_id INTEGER,
       created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
       updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
       UNIQUE(date, time, species, sex, clinic)
@@ -137,7 +140,7 @@ export function initSchema() {
       slot_id INTEGER,
       action TEXT NOT NULL CHECK (action IN (
         'created', 'renewed', 'updated', 'deactivated', 'deleted',
-        'month_published', 'month_scheduled', 'month_hidden'
+        'month_published', 'month_scheduled', 'month_hidden', 'system_blocked'
       )),
       actor_user_id INTEGER REFERENCES users(id) ON DELETE SET NULL,
       actor_name TEXT NOT NULL,
@@ -165,6 +168,9 @@ export function initSchema() {
 
   migrateUsersForClinicRole();
   ensureColumn('slots', 'clinic_id', 'INTEGER REFERENCES clinics(id)');
+  ensureColumn('slots', 'created_by_user_id', 'INTEGER REFERENCES users(id) ON DELETE SET NULL');
+  ensureColumn('slots', 'creation_source', 'TEXT');
+  ensureColumn('slots', 'renewed_from_slot_id', 'INTEGER');
   ensureColumn('users', 'clinic_id', 'INTEGER REFERENCES clinics(id)');
   ensureColumn('users', 'cep', 'TEXT');
   ensureColumn('users', 'address_number', 'TEXT');
@@ -184,6 +190,8 @@ export function initSchema() {
   ensureColumn('appointments', 'responsible_email', 'TEXT');
   ensureColumn('appointments', 'responsible_city_confirmed', 'INTEGER NOT NULL DEFAULT 0');
   ensureColumn('appointments', 'responsible_adult_confirmed', 'INTEGER NOT NULL DEFAULT 0');
+  migrateSlotAuditActions();
+  initSlotCreationGuards();
   removeLegacySlotAuditLogs();
   db.exec(`CREATE UNIQUE INDEX IF NOT EXISTS idx_appointments_microchip ON appointments(microchip) WHERE microchip IS NOT NULL`);
   migrateGlobalSlotReleaseToMonths();
@@ -201,6 +209,153 @@ function ensureColumn(table, column, definition) {
   if (!columns.some((item) => item.name === column)) {
     db.exec(`ALTER TABLE ${table} ADD COLUMN ${column} ${definition}`);
   }
+}
+
+function migrateSlotAuditActions() {
+  const table = db.prepare("SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'slot_audit_logs'").get();
+  if (table?.sql?.includes("'system_blocked'")) return;
+
+  db.exec('PRAGMA foreign_keys = OFF');
+  db.exec('BEGIN IMMEDIATE');
+  try {
+    db.exec(`
+      ALTER TABLE slot_audit_logs RENAME TO slot_audit_logs_old;
+
+      CREATE TABLE slot_audit_logs (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        slot_id INTEGER,
+        action TEXT NOT NULL CHECK (action IN (
+          'created', 'renewed', 'updated', 'deactivated', 'deleted',
+          'month_published', 'month_scheduled', 'month_hidden', 'system_blocked'
+        )),
+        actor_user_id INTEGER REFERENCES users(id) ON DELETE SET NULL,
+        actor_name TEXT NOT NULL,
+        actor_cpf TEXT,
+        slot_date TEXT,
+        slot_time TEXT,
+        species TEXT,
+        sex TEXT,
+        total_quantity INTEGER,
+        occupied_quantity INTEGER,
+        clinic_id INTEGER,
+        clinic_name TEXT,
+        slot_active INTEGER,
+        release_month TEXT,
+        release_at TEXT,
+        details TEXT,
+        event_at TEXT NOT NULL DEFAULT (datetime('now', 'localtime'))
+      );
+
+      INSERT INTO slot_audit_logs (
+        id, slot_id, action, actor_user_id, actor_name, actor_cpf,
+        slot_date, slot_time, species, sex, total_quantity, occupied_quantity,
+        clinic_id, clinic_name, slot_active, release_month, release_at, details, event_at
+      )
+      SELECT
+        id, slot_id, action, actor_user_id, actor_name, actor_cpf,
+        slot_date, slot_time, species, sex, total_quantity, occupied_quantity,
+        clinic_id, clinic_name, slot_active, release_month, release_at, details, event_at
+      FROM slot_audit_logs_old;
+
+      DROP TABLE slot_audit_logs_old;
+      CREATE INDEX idx_slot_audit_logs_event_at ON slot_audit_logs(event_at DESC, id DESC);
+      CREATE INDEX idx_slot_audit_logs_slot_id ON slot_audit_logs(slot_id);
+    `);
+    db.exec('COMMIT');
+  } catch (error) {
+    db.exec('ROLLBACK');
+    throw error;
+  } finally {
+    db.exec('PRAGMA foreign_keys = ON');
+  }
+}
+
+function initSlotCreationGuards() {
+  db.exec(`
+    DROP TRIGGER IF EXISTS audit_admin_slot_creation;
+    DROP TRIGGER IF EXISTS block_unauthorized_slot_creation;
+
+    CREATE TRIGGER audit_admin_slot_creation
+    AFTER INSERT ON slots
+    WHEN
+      NEW.created_by_user_id IS NOT NULL
+      AND NEW.creation_source IN ('manual', 'renewed')
+      AND (
+        (NEW.creation_source = 'manual' AND NEW.renewed_from_slot_id IS NULL)
+        OR (NEW.creation_source = 'renewed' AND NEW.renewed_from_slot_id IS NOT NULL)
+      )
+      AND EXISTS (
+        SELECT 1 FROM users
+        WHERE id = NEW.created_by_user_id AND role = 'admin' AND active = 1
+      )
+    BEGIN
+      INSERT INTO slot_audit_logs (
+        slot_id, action, actor_user_id, actor_name, actor_cpf,
+        slot_date, slot_time, species, sex, total_quantity, occupied_quantity,
+        clinic_id, clinic_name, slot_active, details
+      )
+      SELECT
+        NEW.id,
+        CASE WHEN NEW.creation_source = 'renewed' THEN 'renewed' ELSE 'created' END,
+        admin.id,
+        admin.name,
+        admin.cpf,
+        NEW.date,
+        NEW.time,
+        NEW.species,
+        NEW.sex,
+        NEW.total_quantity,
+        NEW.occupied_quantity,
+        NEW.clinic_id,
+        NEW.clinic,
+        NEW.active,
+        CASE
+          WHEN NEW.creation_source = 'renewed'
+            THEN printf('Criada pelo botão "Renovar Vagas", a partir da vaga #%d.', NEW.renewed_from_slot_id)
+          ELSE 'Criada manualmente.'
+        END
+      FROM users admin
+      WHERE admin.id = NEW.created_by_user_id;
+    END;
+
+    CREATE TRIGGER block_unauthorized_slot_creation
+    AFTER INSERT ON slots
+    WHEN NOT (
+      NEW.created_by_user_id IS NOT NULL
+      AND NEW.creation_source IN ('manual', 'renewed')
+      AND (
+        (NEW.creation_source = 'manual' AND NEW.renewed_from_slot_id IS NULL)
+        OR (NEW.creation_source = 'renewed' AND NEW.renewed_from_slot_id IS NOT NULL)
+      )
+      AND EXISTS (
+        SELECT 1 FROM users
+        WHERE id = NEW.created_by_user_id AND role = 'admin' AND active = 1
+      )
+    )
+    BEGIN
+      INSERT INTO slot_audit_logs (
+        slot_id, action, actor_name, slot_date, slot_time, species, sex,
+        total_quantity, occupied_quantity, clinic_id, clinic_name, slot_active, details
+      )
+      VALUES (
+        NEW.id,
+        'system_blocked',
+        'Sistema automático',
+        NEW.date,
+        NEW.time,
+        NEW.species,
+        NEW.sex,
+        NEW.total_quantity,
+        NEW.occupied_quantity,
+        NEW.clinic_id,
+        NEW.clinic,
+        0,
+        'Tentativa de criação sem ação válida de um administrador. A vaga foi bloqueada e removida automaticamente.'
+      );
+
+      DELETE FROM slots WHERE id = NEW.id;
+    END;
+  `);
 }
 
 function removeLegacySlotAuditLogs() {

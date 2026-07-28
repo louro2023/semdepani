@@ -131,6 +131,9 @@ Representa as vagas cadastradas pela administracao.
 | `clinic_id` | Clinica vinculada |
 | `clinic` | Texto legado com nome da clinica |
 | `active` | Se a vaga esta ativa |
+| `created_by_user_id` | Administrador responsavel pela criacao |
+| `creation_source` | `manual` ou `renewed` |
+| `renewed_from_slot_id` | Vaga original quando criada por renovacao |
 
 ### Tabela `appointments`
 
@@ -366,6 +369,8 @@ O backend cria novas vagas em `slots` com `occupied_quantity = 0`, mantendo as v
 Compatibilidade: o backend ainda aceita o formato antigo com apenas `ids`. Nesse caso, ele clona a vaga para `date + 1 month`, mantendo horario, tipo, clinica e quantidade original.
 
 Nao existe criacao ou renovacao automatica de vagas no bootstrap, em timers ou no seed do banco. Toda insercao em `slots` exige uma rota autenticada com perfil de administrador.
+
+O SQLite tambem protege a tabela com triggers de auditoria. Novas vagas precisam informar `created_by_user_id` de um administrador ativo e `creation_source` como `manual` ou `renewed`. Uma insercao sem autoria administrativa valida e registrada como `system_blocked` em `slot_audit_logs` e a vaga e removida na mesma operacao, antes de poder ser exibida ou publicada.
 
 ### Troca de Senha (Protetor e Clinica)
 

@@ -772,13 +772,16 @@ app.post('/api/admin/slots/renew', requireAdmin, (req, res) => {
           if (!getSlot(sourceId)) throw httpError(404, `Vaga ${sourceId} não encontrada.`);
           const slot = parseSlot(renewal);
           const result = db.prepare(`
-            INSERT INTO slots (date, time, species, sex, total_quantity, occupied_quantity, clinic_id, clinic, active)
-            VALUES (?, ?, ?, ?, ?, 0, ?, ?, 1)
-          `).run(slot.date, slot.time, slot.species, slot.sex, slot.total_quantity, slot.clinic_id, slot.clinic);
+            INSERT INTO slots (
+              date, time, species, sex, total_quantity, occupied_quantity, clinic_id, clinic, active,
+              created_by_user_id, creation_source, renewed_from_slot_id
+            )
+            VALUES (?, ?, ?, ?, ?, 0, ?, ?, 1, ?, 'renewed', ?)
+          `).run(
+            slot.date, slot.time, slot.species, slot.sex, slot.total_quantity, slot.clinic_id, slot.clinic,
+            req.user.id, sourceId
+          );
           const createdSlot = getSlot(result.lastInsertRowid);
-          auditSlotAction('renewed', req.user, createdSlot, {
-            details: `Criada pelo botão "Renovar Vagas", a partir da vaga #${sourceId}.`
-          });
           created.push(createdSlot);
         }
       } else {
@@ -787,13 +790,16 @@ app.post('/api/admin/slots/renew', requireAdmin, (req, res) => {
           if (!slot) throw httpError(404, `Vaga ${id} não encontrada.`);
           const newDate = db.prepare("SELECT date(?, '+1 month') AS d").get(slot.date).d;
           const result = db.prepare(`
-            INSERT INTO slots (date, time, species, sex, total_quantity, occupied_quantity, clinic_id, clinic, active)
-            VALUES (?, ?, ?, ?, ?, 0, ?, ?, 1)
-          `).run(newDate, slot.time, slot.species, slot.sex, slot.total_quantity, slot.clinic_id, slot.clinic);
+            INSERT INTO slots (
+              date, time, species, sex, total_quantity, occupied_quantity, clinic_id, clinic, active,
+              created_by_user_id, creation_source, renewed_from_slot_id
+            )
+            VALUES (?, ?, ?, ?, ?, 0, ?, ?, 1, ?, 'renewed', ?)
+          `).run(
+            newDate, slot.time, slot.species, slot.sex, slot.total_quantity, slot.clinic_id, slot.clinic,
+            req.user.id, slot.id
+          );
           const createdSlot = getSlot(result.lastInsertRowid);
-          auditSlotAction('renewed', req.user, createdSlot, {
-            details: `Criada pelo botão "Renovar Vagas", a partir da vaga #${slot.id}.`
-          });
           created.push(createdSlot);
         }
       }
@@ -817,11 +823,16 @@ app.post('/api/admin/slots', requireAdmin, (req, res) => {
     db.exec('BEGIN IMMEDIATE');
     try {
       const result = db.prepare(`
-        INSERT INTO slots (date, time, species, sex, total_quantity, occupied_quantity, clinic_id, clinic, active)
-        VALUES (?, ?, ?, ?, ?, 0, ?, ?, 1)
-      `).run(slot.date, slot.time, slot.species, slot.sex, slot.total_quantity, slot.clinic_id, slot.clinic);
+        INSERT INTO slots (
+          date, time, species, sex, total_quantity, occupied_quantity, clinic_id, clinic, active,
+          created_by_user_id, creation_source
+        )
+        VALUES (?, ?, ?, ?, ?, 0, ?, ?, 1, ?, 'manual')
+      `).run(
+        slot.date, slot.time, slot.species, slot.sex, slot.total_quantity, slot.clinic_id, slot.clinic,
+        req.user.id
+      );
       const createdSlot = getSlot(result.lastInsertRowid);
-      auditSlotAction('created', req.user, createdSlot, { details: 'Criada manualmente.' });
       db.exec('COMMIT');
       res.status(201).json({ slot: createdSlot });
     } catch (err) {
