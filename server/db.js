@@ -160,10 +160,29 @@ export function initSchema() {
       event_at TEXT NOT NULL DEFAULT (datetime('now', 'localtime'))
     );
 
+    CREATE TABLE IF NOT EXISTS user_notifications (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      type TEXT NOT NULL CHECK (type IN ('appointment_rescheduled')),
+      appointment_id INTEGER REFERENCES appointments(id) ON DELETE CASCADE,
+      title TEXT NOT NULL,
+      message TEXT NOT NULL,
+      old_date TEXT,
+      old_time TEXT,
+      old_clinic TEXT,
+      new_date TEXT,
+      new_time TEXT,
+      new_clinic TEXT,
+      read_at TEXT,
+      created_at TEXT NOT NULL DEFAULT (datetime('now', 'localtime'))
+    );
+
     CREATE INDEX IF NOT EXISTS idx_slot_audit_logs_event_at
       ON slot_audit_logs(event_at DESC, id DESC);
     CREATE INDEX IF NOT EXISTS idx_slot_audit_logs_slot_id
       ON slot_audit_logs(slot_id);
+    CREATE INDEX IF NOT EXISTS idx_user_notifications_unread
+      ON user_notifications(user_id, read_at, created_at DESC);
   `);
 
   migrateUsersForClinicRole();

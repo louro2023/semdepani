@@ -2,6 +2,7 @@
 import {
   AlertCircle,
   BarChart2,
+  Bell,
   Building2,
   Calendar,
   CalendarPlus,
@@ -1133,6 +1134,18 @@ function UserDashboard({ auth, setView }) {
     }
   }
 
+  async function markNotificationRead(id) {
+    try {
+      await request(`/me/notifications/${id}/read`, { method: 'POST', body: {} }, auth.token);
+      setData((current) => ({
+        ...current,
+        notifications: (current.notifications || []).filter((notification) => notification.id !== id)
+      }));
+    } catch (err) {
+      setError(err.message);
+    }
+  }
+
   if (error) return <InlineAlert message={error} />;
   if (!data) return <Loading label="Carregando área do usuário" />;
 
@@ -1148,6 +1161,34 @@ function UserDashboard({ auth, setView }) {
           Seu cadastro está ativo. Para solicitar a castração, clique em agendar, informe os dados do animal e escolha uma clínica com vaga disponível.
         </p>
       </div>
+      {(data.notifications || []).length ? (
+        <div className="user-notifications" aria-live="polite">
+          {(data.notifications || []).map((notification) => (
+            <article className="reschedule-notification" key={notification.id}>
+              <div className="notification-icon"><Bell size={21} /></div>
+              <div className="notification-content">
+                <strong>{notification.title}</strong>
+                <p>{notification.message}</p>
+                <div className="notification-schedule-change">
+                  <div>
+                    <span>Agendamento anterior</span>
+                    <strong>{formatDate(notification.old_date)} às {notification.old_time}</strong>
+                    <small>{notification.old_clinic}</small>
+                  </div>
+                  <div>
+                    <span>Novo agendamento</span>
+                    <strong>{formatDate(notification.new_date)} às {notification.new_time}</strong>
+                    <small>{notification.new_clinic}</small>
+                  </div>
+                </div>
+              </div>
+              <button className="button secondary small" type="button" onClick={() => markNotificationRead(notification.id)}>
+                Entendi
+              </button>
+            </article>
+          ))}
+        </div>
+      ) : null}
       <div className="metric-row">
         <Metric icon={Calendar} label="Limite mensal" value={limitLabel} />
         <Metric icon={CheckCircle2} label="Usados no mês" value={data.currentMonthUsed} />
@@ -1635,7 +1676,7 @@ function AdminPanel({ auth }) {
       {tab === 'dashboard' ? <AdminSummary summary={summary} reports={reports} /> : null}
       {tab === 'clinics' ? <ClinicsTab clinics={clinics} reload={loadAll} auth={auth} /> : null}
       {tab === 'slots' ? <SlotsTab slots={slots} clinics={clinics} reload={loadAll} auth={auth} /> : null}
-      {tab === 'appointments' ? <AppointmentsTab appointments={appointments} reload={loadAll} auth={auth} /> : null}
+      {tab === 'appointments' ? <AppointmentsTab appointments={appointments} slots={slots} clinics={clinics} reload={loadAll} auth={auth} /> : null}
       {tab === 'logs' ? <SlotLogsTab auth={auth} /> : null}
       {tab === 'users' ? <UsersTab users={users} clinics={clinics} reload={loadAll} auth={auth} /> : null}
       {tab === 'protectors' ? <ProtectorsTab protectors={protectors} clinics={clinics} reload={loadAll} auth={auth} /> : null}
@@ -3403,10 +3444,11 @@ function AppointmentResponsibleInfo({ appointment }) {
   );
 }
 
-function AppointmentsTab({ appointments, reload, auth }) {
+function AppointmentsTab({ appointments, slots = [], clinics = [], reload, auth }) {
   const [drafts, setDrafts] = useState({});
   const [rowErrors, setRowErrors] = useState({});
   const [rowMessages, setRowMessages] = useState({});
+  const [rescheduling, setRescheduling] = useState(null);
 
   function draftFor(appointment) {
     return drafts[appointment.id] || { status: appointment.status, reason: appointment.reason || '', microchip: appointment.microchip || '' };
@@ -3443,6 +3485,22 @@ function AppointmentsTab({ appointments, reload, auth }) {
     } catch (err) {
       setRowErrors(prev => ({ ...prev, [appointment.id]: err.message }));
     }
+  }
+
+  if (rescheduling) {
+    return (
+      <AppointmentRescheduleScreen
+        appointment={rescheduling}
+        slots={slots}
+        clinics={clinics}
+        auth={auth}
+        onCancel={() => setRescheduling(null)}
+        onSaved={() => {
+          setRescheduling(null);
+          reload();
+        }}
+      />
+    );
   }
 
   return (
@@ -3509,12 +3567,145 @@ function AppointmentsTab({ appointments, reload, auth }) {
                 <Save size={18} />
                 <span>Salvar</span>
               </button>
+              {auth.user.role === 'admin' && appointment.status === 'agendado' ? (
+                <button className="button ghost table-save" type="button" onClick={() => setRescheduling(appointment)} title="Alterar clínica, data e horário">
+                  <Edit3 size={18} />
+                  <span>Remarcar</span>
+                </button>
+              ) : null}
               {rowErrors[appointment.id] ? <span className="row-save-error">{rowErrors[appointment.id]}</span> : null}
               {rowMessages[appointment.id] ? <span className="row-save-success">{rowMessages[appointment.id]}</span> : null}
             </div>
           ];
         })}
       />
+    </div>
+  );
+}
+
+function AppointmentRescheduleScreen({ appointment, slots, clinics, auth, onCancel, onSaved }) {
+  const [clinicId, setClinicId] = useState(String(appointment.clinic_id || ''));
+  const [date, setDate] = useState(appointment.date || '');
+  const [slotId, setSlotId] = useState(String(appointment.slot_id || ''));
+  const [error, setError] = useState('');
+  const [saving, setSaving] = useState(false);
+
+  const compatibleSlots = useMemo(() => slots.filter((slot) => (
+    Boolean(slot.active) &&
+    slot.species === appointment.species &&
+    slot.sex === appointment.sex &&
+    slot.date >= getTodayIsoDate() &&
+    (Number(slot.available_quantity) > 0 || Number(slot.id) === Number(appointment.slot_id))
+  )), [slots, appointment]);
+
+  const selectableClinicIds = new Set(compatibleSlots.map((slot) => String(slot.clinic_id)));
+  const availableClinics = clinics.filter((clinic) => Boolean(clinic.active) && selectableClinicIds.has(String(clinic.id)));
+  const dates = [...new Set(
+    compatibleSlots
+      .filter((slot) => String(slot.clinic_id) === clinicId)
+      .map((slot) => slot.date)
+  )].sort();
+  const times = compatibleSlots
+    .filter((slot) => String(slot.clinic_id) === clinicId && slot.date === date)
+    .sort((a, b) => a.time.localeCompare(b.time));
+  const selectedSlot = compatibleSlots.find((slot) => String(slot.id) === slotId);
+  const unchanged = Number(slotId) === Number(appointment.slot_id);
+
+  function changeClinic(value) {
+    setClinicId(value);
+    setDate('');
+    setSlotId('');
+    setError('');
+  }
+
+  function changeDate(value) {
+    setDate(value);
+    setSlotId('');
+    setError('');
+  }
+
+  async function submit(event) {
+    event.preventDefault();
+    if (!slotId || unchanged) {
+      setError(unchanged ? 'Selecione uma clínica, data ou horário diferente do agendamento atual.' : 'Selecione a nova clínica, data e horário.');
+      return;
+    }
+    setSaving(true);
+    setError('');
+    try {
+      await request(`/admin/appointments/${appointment.id}/reschedule`, {
+        method: 'PUT',
+        body: { slotId: Number(slotId) }
+      }, auth.token);
+      onSaved();
+    } catch (err) {
+      setError(err.message);
+      setSaving(false);
+    }
+  }
+
+  return (
+    <div className="admin-section appointment-reschedule-screen">
+      <div className="section-title">
+        <span className="eyebrow">Remarcar agendamento</span>
+        <h3>{appointment.animal_name} · {appointment.user_name}</h3>
+        <p>Escolha uma vaga disponível compatível com {appointment.animal_type_label.toLowerCase()}.</p>
+      </div>
+
+      <div className="current-schedule-card">
+        <span>Agendamento atual</span>
+        <strong>{formatDate(appointment.date)} às {appointment.time}</strong>
+        <small>{appointment.clinic}{appointment.clinic_address ? ` · ${appointment.clinic_address}` : ''}</small>
+      </div>
+
+      <form onSubmit={submit}>
+        <div className="form-grid appointment-reschedule-fields">
+          <label className="field">
+            <span>Nova clínica *</span>
+            <select value={clinicId} onChange={(event) => changeClinic(event.target.value)} required>
+              <option value="">Selecione</option>
+              {availableClinics.map((clinic) => <option key={clinic.id} value={clinic.id}>{clinic.name}</option>)}
+            </select>
+          </label>
+          <label className="field">
+            <span>Nova data *</span>
+            <select value={date} onChange={(event) => changeDate(event.target.value)} required disabled={!clinicId}>
+              <option value="">Selecione</option>
+              {dates.map((item) => <option key={item} value={item}>{formatDate(item)}</option>)}
+            </select>
+          </label>
+          <label className="field">
+            <span>Novo horário *</span>
+            <select value={slotId} onChange={(event) => { setSlotId(event.target.value); setError(''); }} required disabled={!date}>
+              <option value="">Selecione</option>
+              {times.map((slot) => (
+                <option key={slot.id} value={slot.id}>
+                  {slot.time} · {slot.available_quantity} vaga{Number(slot.available_quantity) !== 1 ? 's' : ''}
+                  {Number(slot.id) === Number(appointment.slot_id) ? ' (atual)' : ''}
+                </option>
+              ))}
+            </select>
+          </label>
+        </div>
+        {selectedSlot && !unchanged ? (
+          <div className="new-schedule-summary">
+            <CheckCircle2 size={18} />
+            <span>
+              Novo agendamento: <strong>{formatDate(selectedSlot.date)} às {selectedSlot.time}</strong>, na <strong>{selectedSlot.clinic}</strong>.
+            </span>
+          </div>
+        ) : null}
+        {error ? <InlineAlert message={error} /> : null}
+        {!compatibleSlots.some((slot) => Number(slot.id) !== Number(appointment.slot_id)) ? (
+          <InlineAlert message="Não há outra vaga futura disponível para esta espécie e sexo." />
+        ) : null}
+        <div className="form-actions">
+          <button className="button ghost" type="button" onClick={onCancel} disabled={saving}>Voltar</button>
+          <button className="button primary" type="submit" disabled={saving || !slotId || unchanged}>
+            <Save size={18} /> {saving ? 'Salvando...' : 'Confirmar alteração'}
+          </button>
+        </div>
+      </form>
     </div>
   );
 }

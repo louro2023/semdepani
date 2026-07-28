@@ -268,8 +268,27 @@ app.get('/api/me', requireAuth, (req, res) => {
     user: publicUser(user),
     limit: getAppointmentLimit(user.role),
     currentMonthUsed: getCurrentMonthUsage(user.id),
-    appointments: listAppointments({ userId: user.id }).map(addResponsibleEditInfo)
+    appointments: listAppointments({ userId: user.id }).map(addResponsibleEditInfo),
+    notifications: listUnreadNotifications(user.id)
   });
+});
+
+app.post('/api/me/notifications/:id/read', requireAuth, (req, res) => {
+  try {
+    const notificationId = Number(req.params.id);
+    if (!Number.isInteger(notificationId) || notificationId <= 0) {
+      throw httpError(400, 'Notificação inválida.');
+    }
+    const result = db.prepare(`
+      UPDATE user_notifications
+      SET read_at = datetime('now', 'localtime')
+      WHERE id = ? AND user_id = ? AND read_at IS NULL
+    `).run(notificationId, req.user.id);
+    if (result.changes !== 1) throw httpError(404, 'Notificação não encontrada.');
+    res.json({ success: true });
+  } catch (error) {
+    sendError(res, error);
+  }
 });
 
 app.put('/api/me/password', requireAuth, (req, res) => {
@@ -941,6 +960,15 @@ app.patch('/api/admin/appointments/:id/status', requireAppointmentManager, (req,
   }
 });
 
+app.put('/api/admin/appointments/:id/reschedule', requireAdmin, (req, res) => {
+  try {
+    const appointment = rescheduleAppointment(req.params.id, req.body?.slotId);
+    res.json({ appointment });
+  } catch (error) {
+    sendError(res, error);
+  }
+});
+
 app.get('/api/admin/users', requireAdmin, (_req, res) => {
   const users = db.prepare(`
     SELECT u.id, u.name, u.cpf, u.phone, u.address, u.neighborhood, u.role, u.clinic_id, c.name AS clinic_name,
@@ -1577,6 +1605,7 @@ function listAppointments({ userId, clinicId, appointmentId } = {}) {
       an.breed,
       an.approximate_age,
       s.id AS slot_id,
+      s.clinic_id,
       s.date,
       s.time,
       COALESCE(c.name, s.clinic) AS clinic,
@@ -1597,6 +1626,122 @@ function getAppointmentDetails(id) {
   const [appointment] = listAppointments({ appointmentId: id });
   if (!appointment) throw httpError(404, 'Agendamento não encontrado.');
   return appointment;
+}
+
+function listUnreadNotifications(userId) {
+  return db.prepare(`
+    SELECT
+      id, type, appointment_id, title, message,
+      old_date, old_time, old_clinic,
+      new_date, new_time, new_clinic,
+      created_at
+    FROM user_notifications
+    WHERE user_id = ? AND read_at IS NULL
+    ORDER BY created_at DESC, id DESC
+  `).all(userId);
+}
+
+function rescheduleAppointment(appointmentIdValue, targetSlotIdValue) {
+  const appointmentId = Number(appointmentIdValue);
+  const targetSlotId = Number(targetSlotIdValue);
+  if (!Number.isInteger(appointmentId) || appointmentId <= 0) {
+    throw httpError(400, 'Agendamento inválido.');
+  }
+  if (!Number.isInteger(targetSlotId) || targetSlotId <= 0) {
+    throw httpError(400, 'Selecione a nova clínica, data e horário.');
+  }
+
+  db.exec('BEGIN IMMEDIATE');
+  try {
+    const appointment = db.prepare(`
+      SELECT
+        a.id, a.user_id, a.slot_id, a.status, a.protocol,
+        an.species, an.sex,
+        old_slot.date AS old_date,
+        old_slot.time AS old_time,
+        COALESCE(old_clinic.name, old_slot.clinic) AS old_clinic
+      FROM appointments a
+      JOIN animals an ON an.id = a.animal_id
+      JOIN slots old_slot ON old_slot.id = a.slot_id
+      LEFT JOIN clinics old_clinic ON old_clinic.id = old_slot.clinic_id
+      WHERE a.id = ?
+    `).get(appointmentId);
+    if (!appointment) throw httpError(404, 'Agendamento não encontrado.');
+    if (appointment.status !== 'agendado') {
+      throw httpError(409, 'Somente agendamentos com status Agendado podem ser remarcados.');
+    }
+    if (appointment.slot_id === targetSlotId) {
+      throw httpError(400, 'Selecione uma vaga diferente da atual.');
+    }
+
+    const target = db.prepare(`
+      SELECT
+        s.id, s.date, s.time, s.species, s.sex,
+        s.total_quantity, s.occupied_quantity, s.active,
+        c.id AS clinic_id, c.name AS clinic, c.active AS clinic_active
+      FROM slots s
+      JOIN clinics c ON c.id = s.clinic_id
+      WHERE s.id = ?
+    `).get(targetSlotId);
+    if (!target) throw httpError(404, 'Nova vaga não encontrada.');
+    if (!target.active || !target.clinic_active) {
+      throw httpError(409, 'A nova vaga ou clínica está inativa.');
+    }
+    if (target.species !== appointment.species || target.sex !== appointment.sex) {
+      throw httpError(409, 'A nova vaga não é compatível com a espécie e o sexo do animal.');
+    }
+    const future = db.prepare(`
+      SELECT datetime(? || ' ' || ?) > datetime('now', 'localtime') AS valid
+    `).get(target.date, target.time);
+    if (!future?.valid) throw httpError(409, 'Selecione uma data e horário futuros.');
+
+    const occupied = db.prepare(`
+      UPDATE slots
+      SET occupied_quantity = occupied_quantity + 1, updated_at = CURRENT_TIMESTAMP
+      WHERE id = ? AND active = 1 AND occupied_quantity < total_quantity
+    `).run(target.id);
+    if (occupied.changes !== 1) throw httpError(409, 'A nova vaga não possui mais disponibilidade.');
+
+    const released = db.prepare(`
+      UPDATE slots
+      SET occupied_quantity = occupied_quantity - 1, updated_at = CURRENT_TIMESTAMP
+      WHERE id = ? AND occupied_quantity > 0
+    `).run(appointment.slot_id);
+    if (released.changes !== 1) {
+      throw httpError(409, 'A ocupação da vaga atual está inconsistente. Nenhuma alteração foi realizada.');
+    }
+
+    db.prepare(`
+      UPDATE appointments
+      SET slot_id = ?, updated_at = CURRENT_TIMESTAMP
+      WHERE id = ?
+    `).run(target.id, appointment.id);
+
+    db.prepare(`
+      INSERT INTO user_notifications (
+        user_id, type, appointment_id, title, message,
+        old_date, old_time, old_clinic,
+        new_date, new_time, new_clinic
+      ) VALUES (?, 'appointment_rescheduled', ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `).run(
+      appointment.user_id,
+      appointment.id,
+      'Seu agendamento foi alterado',
+      `O agendamento ${appointment.protocol} foi remarcado pela administração.`,
+      appointment.old_date,
+      appointment.old_time,
+      appointment.old_clinic,
+      target.date,
+      target.time,
+      target.clinic
+    );
+
+    db.exec('COMMIT');
+    return getAppointmentDetails(appointment.id);
+  } catch (error) {
+    db.exec('ROLLBACK');
+    throw error;
+  }
 }
 
 function canUpdateAppointmentResponsible(appointment, minHours = RESPONSIBLE_UPDATE_MIN_HOURS) {
