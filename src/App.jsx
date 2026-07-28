@@ -11,6 +11,7 @@ import {
   Edit3,
   Eye,
   FileCheck,
+  History,
   Home,
   KeyRound,
   LogIn,
@@ -1620,6 +1621,7 @@ function AdminPanel({ auth }) {
           ['clinics', Building2, 'Clínicas'],
           ['slots', Calendar, 'Vagas'],
           ['appointments', ClipboardCheck, 'Agendamentos'],
+          ['logs', History, 'Logs de vagas'],
           ['users', Users, 'Usuários'],
           ['protectors', Shield, 'Protetores Cadastrados'],
           ['reports', BarChart2, 'Relatórios']
@@ -1634,6 +1636,7 @@ function AdminPanel({ auth }) {
       {tab === 'clinics' ? <ClinicsTab clinics={clinics} reload={loadAll} auth={auth} /> : null}
       {tab === 'slots' ? <SlotsTab slots={slots} clinics={clinics} reload={loadAll} auth={auth} /> : null}
       {tab === 'appointments' ? <AppointmentsTab appointments={appointments} reload={loadAll} auth={auth} /> : null}
+      {tab === 'logs' ? <SlotLogsTab auth={auth} /> : null}
       {tab === 'users' ? <UsersTab users={users} clinics={clinics} reload={loadAll} auth={auth} /> : null}
       {tab === 'protectors' ? <ProtectorsTab protectors={protectors} clinics={clinics} reload={loadAll} auth={auth} /> : null}
       {tab === 'reports' ? <ReportsTab reports={reports} /> : null}
@@ -2621,6 +2624,180 @@ function ClinicsTab({ clinics, reload, auth }) {
 }
 
 const SLOTS_PAGE_SIZE = 20;
+const SLOT_LOGS_PAGE_SIZE = 30;
+const SLOT_LOG_ACTIONS = {
+  created: ['Criada', 'created'],
+  renewed: ['Renovada', 'renewed'],
+  updated: ['Editada', 'updated'],
+  deactivated: ['Cancelada/desativada', 'deactivated'],
+  deleted: ['Excluída definitivamente', 'deleted'],
+  month_published: ['Mês publicado', 'published'],
+  month_scheduled: ['Publicação agendada', 'scheduled'],
+  month_hidden: ['Mês ocultado', 'hidden']
+};
+
+function formatSlotLogObservation(log) {
+  const details = String(log.details || '').trim();
+  if (log.action === 'created') return details || 'Criada manualmente.';
+  if (log.action === 'renewed') {
+    if (/renovação mensal automática/i.test(details)) return 'Criada por renovação automática.';
+    if (/criada pelo botão "Renovar Vagas"/i.test(details)) return details;
+    return `Criada pelo botão "Renovar Vagas".${details ? ` ${details}` : ''}`;
+  }
+  return details || '-';
+}
+
+function SlotLogsTab({ auth }) {
+  const [logs, setLogs] = useState([]);
+  const [filters, setFilters] = useState({ action: '', clinic_id: '', month: '', actor: '', date: '' });
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState('');
+  const [page, setPage] = useState(1);
+
+  useEffect(() => {
+    let cancelled = false;
+    setLoading(true);
+    request('/admin/slot-logs', {}, auth.token)
+      .then((data) => {
+        if (!cancelled) {
+          setLogs(data.logs || []);
+          setError('');
+        }
+      })
+      .catch((err) => {
+        if (!cancelled) setError(err.message);
+      })
+      .finally(() => {
+        if (!cancelled) setLoading(false);
+      });
+    return () => { cancelled = true; };
+  }, [auth.token]);
+
+  const clinicOptions = useMemo(() => {
+    const clinics = new Map();
+    logs.forEach((log) => {
+      if (log.clinic_id && log.clinic_name) clinics.set(String(log.clinic_id), log.clinic_name);
+    });
+    return [...clinics.entries()]
+      .map(([id, name]) => ({ id, name }))
+      .sort((a, b) => a.name.localeCompare(b.name, 'pt-BR'));
+  }, [logs]);
+
+  const monthOptions = useMemo(() => (
+    [...new Set(logs.map((log) => log.release_month || String(log.slot_date || '').slice(0, 7)).filter(Boolean))]
+      .sort()
+      .reverse()
+  ), [logs]);
+
+  const filteredLogs = useMemo(() => {
+    const filterDate = toIsoDate(filters.date);
+    const actor = filters.actor.trim().toLocaleLowerCase('pt-BR');
+    return logs.filter((log) => (
+      (!filters.action || log.action === filters.action) &&
+      (!filters.clinic_id || String(log.clinic_id) === filters.clinic_id) &&
+      (!filters.month || (log.release_month || String(log.slot_date || '').slice(0, 7)) === filters.month) &&
+      (!filterDate || String(log.event_at || '').slice(0, 10) === filterDate) &&
+      (!actor || String(log.actor_name || '').toLocaleLowerCase('pt-BR').includes(actor))
+    ));
+  }, [logs, filters]);
+
+  useEffect(() => { setPage(1); }, [filters]);
+
+  const totalPages = Math.max(1, Math.ceil(filteredLogs.length / SLOT_LOGS_PAGE_SIZE));
+  const safePage = Math.min(page, totalPages);
+  const pagedLogs = filteredLogs.slice((safePage - 1) * SLOT_LOGS_PAGE_SIZE, safePage * SLOT_LOGS_PAGE_SIZE);
+
+  return (
+    <div className="admin-section slot-logs-section">
+      <div className="section-title compact">
+        <span className="eyebrow">Auditoria administrativa</span>
+        <h3>Histórico de vagas</h3>
+        <p>Consulte quem criou, alterou, disponibilizou, cancelou ou excluiu vagas.</p>
+      </div>
+      {error ? <InlineAlert message={error} /> : null}
+      <div className="filter-bar slot-logs-filters" aria-label="Filtros dos logs de vagas">
+        <label className="field">
+          <span>Ação</span>
+          <select value={filters.action} onChange={(event) => setFilters({ ...filters, action: event.target.value })}>
+            <option value="">Todas</option>
+            {Object.entries(SLOT_LOG_ACTIONS).map(([value, [label]]) => (
+              <option key={value} value={value}>{label}</option>
+            ))}
+          </select>
+        </label>
+        <label className="field">
+          <span>Clínica</span>
+          <select value={filters.clinic_id} onChange={(event) => setFilters({ ...filters, clinic_id: event.target.value })}>
+            <option value="">Todas as clínicas</option>
+            {clinicOptions.map((clinic) => (
+              <option key={clinic.id} value={clinic.id}>{clinic.name}</option>
+            ))}
+          </select>
+        </label>
+        <label className="field">
+          <span>Mês da vaga</span>
+          <select value={filters.month} onChange={(event) => setFilters({ ...filters, month: event.target.value })}>
+            <option value="">Todos os meses</option>
+            {monthOptions.map((month) => (
+              <option key={month} value={month}>{formatMonthYear(month)}</option>
+            ))}
+          </select>
+        </label>
+        <TextField
+          label="Administrador"
+          value={filters.actor}
+          onChange={(value) => setFilters({ ...filters, actor: value })}
+        />
+        <DateField label="Data da ação" value={filters.date} onChange={(value) => setFilters({ ...filters, date: value })} />
+        <button
+          className="button ghost filter-clear-button"
+          type="button"
+          onClick={() => setFilters({ action: '', clinic_id: '', month: '', actor: '', date: '' })}
+        >
+          <XCircle size={17} /> Limpar filtros
+        </button>
+      </div>
+      <div className="slot-logs-count">
+        <strong>{filteredLogs.length}</strong> evento{filteredLogs.length !== 1 ? 's' : ''} encontrado{filteredLogs.length !== 1 ? 's' : ''}
+      </div>
+      {loading ? <Loading label="Carregando histórico" /> : (
+        <>
+          <DataTable
+            className="slot-logs-table"
+            columns={['Data da ação', 'Ação', 'Administrador', 'Vaga ou mês', 'Clínica', 'Quantidade', 'Observação']}
+            rows={pagedLogs.map((log) => {
+              const [actionLabel, actionClass] = SLOT_LOG_ACTIONS[log.action] || [log.action, 'updated'];
+              const isMonthAction = Boolean(log.release_month);
+              return [
+                <strong key={`date-${log.id}`}>{formatReleaseDateTime(log.event_at)}</strong>,
+                <StatusBadge key={`action-${log.id}`} status={`audit-${actionClass}`} label={actionLabel} />,
+                <div key={`actor-${log.id}`} className="slot-log-actor">
+                  <strong>{log.actor_name}</strong>
+                  {log.actor_cpf ? <span>CPF {maskCpf(log.actor_cpf)}</span> : null}
+                </div>,
+                isMonthAction ? (
+                  <div key={`slot-${log.id}`} className="slot-log-subject">
+                    <strong>{formatMonthYear(log.release_month)}</strong>
+                    {log.release_at ? <span>Para {formatReleaseDateTime(log.release_at)}</span> : null}
+                  </div>
+                ) : (
+                  <div key={`slot-${log.id}`} className="slot-log-subject">
+                    <strong>#{log.slot_id} · {formatDate(log.slot_date)} às {log.slot_time}</strong>
+                    <span>{capitalize(animalLabel(log.species, log.sex))}</span>
+                  </div>
+                ),
+                log.clinic_name || (isMonthAction ? 'Todas do mês' : '-'),
+                log.total_quantity ?? '-',
+                formatSlotLogObservation(log)
+              ];
+            })}
+          />
+          <Pagination page={safePage} totalPages={totalPages} onChange={setPage} />
+        </>
+      )}
+    </div>
+  );
+}
 
 function SlotsTab({ slots, clinics, reload, auth }) {
   const blank = { date: '', time: '09:00', species: 'gato', sex: 'femea', total_quantity: 1, clinic_id: '' };
@@ -3968,6 +4145,21 @@ function DataTable({ columns, rows, className = '' }) {
           ))}
         </tbody>
       </table>
+    </div>
+  );
+}
+
+function Pagination({ page, totalPages, onChange }) {
+  if (totalPages <= 1) return null;
+  return (
+    <div className="pagination" aria-label="Paginação">
+      <button className="button ghost small" type="button" onClick={() => onChange(page - 1)} disabled={page <= 1}>
+        Anterior
+      </button>
+      <span>Página <strong>{page}</strong> de <strong>{totalPages}</strong></span>
+      <button className="button ghost small" type="button" onClick={() => onChange(page + 1)} disabled={page >= totalPages}>
+        Próxima
+      </button>
     </div>
   );
 }

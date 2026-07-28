@@ -1469,6 +1469,34 @@ select:focus,
   background: #eceff3;
 }
 
+.status-badge.audit-created,
+.status-badge.audit-renewed,
+.status-badge.audit-published {
+  color: #0d6a4b;
+  background: #dbf5ea;
+}
+
+.status-badge.audit-updated {
+  color: #18568a;
+  background: #e2f1ff;
+}
+
+.status-badge.audit-scheduled {
+  color: #725200;
+  background: #fff4c7;
+}
+
+.status-badge.audit-deactivated,
+.status-badge.audit-deleted {
+  color: #842018;
+  background: #ffe0da;
+}
+
+.status-badge.audit-hidden {
+  color: #5f6470;
+  background: #eceff3;
+}
+
 .tabs {
   display: flex;
   gap: 8px;
@@ -1516,6 +1544,56 @@ select:focus,
 
 .admin-section h3 {
   margin: 0;
+}
+
+.slot-logs-section .section-title {
+  margin-bottom: 0;
+}
+
+.slot-logs-filters {
+  grid-template-columns:
+    minmax(180px, 0.8fr)
+    minmax(210px, 1fr)
+    minmax(180px, 0.8fr)
+    minmax(210px, 1fr)
+    minmax(180px, 0.8fr)
+    auto;
+}
+
+@media (max-width: 1360px) {
+  .slot-logs-filters {
+    grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  }
+}
+
+.slot-logs-count {
+  color: var(--muted);
+  font-size: 0.9rem;
+}
+
+.slot-logs-count strong {
+  color: var(--ink);
+}
+
+.slot-logs-table table {
+  min-width: 1120px;
+}
+
+.slot-logs-table td {
+  vertical-align: top;
+}
+
+.slot-log-actor,
+.slot-log-subject {
+  display: grid;
+  gap: 3px;
+  min-width: 150px;
+}
+
+.slot-log-actor span,
+.slot-log-subject span {
+  color: var(--muted);
+  font-size: 0.8rem;
 }
 
 .filter-bar {

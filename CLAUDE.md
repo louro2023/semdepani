@@ -149,6 +149,7 @@ Outras tabelas:
 - `animals`: animais do usuario.
 - `settings`: chaves internas de seed/importacao.
 - `slot_release_months`: mes (`YYYY-MM`) e data/hora em que suas vagas se tornam publicas.
+- `slot_audit_logs`: historico imutavel de criacao, renovacao, edicao, desativacao, exclusao e publicacao de vagas, com administrador e fotografia dos dados no momento da acao. Registra somente acoes ocorridas depois da implantacao da auditoria; vagas antigas nao sao importadas retroativamente.
 
 ### Migracoes Automaticas Existentes
 
@@ -459,6 +460,7 @@ Comportamento:
 | PUT/DELETE | `/api/admin/slots/:id` | Editar/desativar/excluir vaga |
 | GET | `/api/admin/slots/releases` | Listar estado de publicacao de todos os meses com vagas |
 | PUT | `/api/admin/slots/releases/:month` | Publicar agora, ocultar ou agendar a publicacao de um mes |
+| GET | `/api/admin/slot-logs` | Listar o historico administrativo de vagas e publicacoes |
 | POST | `/api/admin/slots/renew` | Renovar vagas selecionadas com novos dados |
 | POST | `/api/admin/slots/auto-renew` | Renovacao automatica mensal |
 | GET/POST/PUT | `/api/admin/users` | CRUD usuarios |

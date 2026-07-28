@@ -686,27 +686,45 @@ app.put('/api/admin/slots/releases/:month', requireAdmin, (req, res) => {
     const slotCount = db.prepare('SELECT COUNT(*) AS total FROM slots WHERE substr(date, 1, 7) = ?').get(month).total;
     if (!slotCount) throw httpError(404, 'Não existem vagas cadastradas para este mês.');
 
-    if (action === 'hidden') {
-      db.prepare('DELETE FROM slot_release_months WHERE month = ?').run(month);
-    } else {
-      let releaseAt;
-      if (action === 'now') {
-        releaseAt = db.prepare("SELECT datetime('now', 'localtime') AS value").get().value;
-      } else if (action === 'scheduled') {
-        releaseAt = normalizeReleaseDateTime(req.body.releaseAt);
-        const isFuture = db.prepare("SELECT datetime(?) > datetime('now', 'localtime') AS valid").get(releaseAt).valid;
-        if (!isFuture) throw httpError(400, 'Escolha uma data e horário futuros para a publicação.');
+    let releaseAt = null;
+    db.exec('BEGIN IMMEDIATE');
+    try {
+      if (action === 'hidden') {
+        db.prepare('DELETE FROM slot_release_months WHERE month = ?').run(month);
       } else {
-        throw httpError(400, 'Ação de publicação inválida.');
+        if (action === 'now') {
+          releaseAt = db.prepare("SELECT datetime('now', 'localtime') AS value").get().value;
+        } else if (action === 'scheduled') {
+          releaseAt = normalizeReleaseDateTime(req.body.releaseAt);
+          const isFuture = db.prepare("SELECT datetime(?) > datetime('now', 'localtime') AS valid").get(releaseAt).valid;
+          if (!isFuture) throw httpError(400, 'Escolha uma data e horário futuros para a publicação.');
+        } else {
+          throw httpError(400, 'Ação de publicação inválida.');
+        }
+
+        db.prepare(`
+          INSERT INTO slot_release_months (month, release_at)
+          VALUES (?, ?)
+          ON CONFLICT(month) DO UPDATE SET
+            release_at = excluded.release_at,
+            updated_at = CURRENT_TIMESTAMP
+        `).run(month, releaseAt);
       }
 
-      db.prepare(`
-        INSERT INTO slot_release_months (month, release_at)
-        VALUES (?, ?)
-        ON CONFLICT(month) DO UPDATE SET
-          release_at = excluded.release_at,
-          updated_at = CURRENT_TIMESTAMP
-      `).run(month, releaseAt);
+      auditSlotAction(
+        action === 'now' ? 'month_published' : action === 'scheduled' ? 'month_scheduled' : 'month_hidden',
+        req.user,
+        null,
+        {
+          releaseMonth: month,
+          releaseAt,
+          details: `${slotCount} registro(s) de vagas no mês no momento da ação.`
+        }
+      );
+      db.exec('COMMIT');
+    } catch (err) {
+      db.exec('ROLLBACK');
+      throw err;
     }
 
     res.json({ release: getSlotMonthRelease(month) });
@@ -730,9 +748,19 @@ app.get('/api/admin/slots', requireAdmin, (_req, res) => {
   res.json({ slots: slots.map((slot) => ({ ...slot, label: animalTypeLabel(slot.species, slot.sex) })) });
 });
 
-app.post('/api/admin/slots/auto-renew', requireAdmin, (_req, res) => {
+app.get('/api/admin/slot-logs', requireAdmin, (_req, res) => {
+  const logs = db.prepare(`
+    SELECT *
+    FROM slot_audit_logs
+    ORDER BY datetime(event_at) DESC, id DESC
+  `).all();
+  res.json({ logs });
+});
+
+app.post('/api/admin/slots/auto-renew', requireAdmin, (req, res) => {
   try {
     const result = autoRenewSlots();
+    auditAutoRenewResult(result, req.user);
     res.json(result);
   } catch (error) {
     sendError(res, error);
@@ -758,7 +786,11 @@ app.post('/api/admin/slots/renew', requireAdmin, (req, res) => {
             INSERT INTO slots (date, time, species, sex, total_quantity, occupied_quantity, clinic_id, clinic, active)
             VALUES (?, ?, ?, ?, ?, 0, ?, ?, 1)
           `).run(slot.date, slot.time, slot.species, slot.sex, slot.total_quantity, slot.clinic_id, slot.clinic);
-          created.push(getSlot(result.lastInsertRowid));
+          const createdSlot = getSlot(result.lastInsertRowid);
+          auditSlotAction('renewed', req.user, createdSlot, {
+            details: `Criada pelo botão "Renovar Vagas", a partir da vaga #${sourceId}.`
+          });
+          created.push(createdSlot);
         }
       } else {
         for (const id of ids) {
@@ -769,7 +801,11 @@ app.post('/api/admin/slots/renew', requireAdmin, (req, res) => {
             INSERT INTO slots (date, time, species, sex, total_quantity, occupied_quantity, clinic_id, clinic, active)
             VALUES (?, ?, ?, ?, ?, 0, ?, ?, 1)
           `).run(newDate, slot.time, slot.species, slot.sex, slot.total_quantity, slot.clinic_id, slot.clinic);
-          created.push(getSlot(result.lastInsertRowid));
+          const createdSlot = getSlot(result.lastInsertRowid);
+          auditSlotAction('renewed', req.user, createdSlot, {
+            details: `Criada pelo botão "Renovar Vagas", a partir da vaga #${slot.id}.`
+          });
+          created.push(createdSlot);
         }
       }
       db.exec('COMMIT');
@@ -789,11 +825,20 @@ app.post('/api/admin/slots/renew', requireAdmin, (req, res) => {
 app.post('/api/admin/slots', requireAdmin, (req, res) => {
   try {
     const slot = parseSlot(req.body);
-    const result = db.prepare(`
-      INSERT INTO slots (date, time, species, sex, total_quantity, occupied_quantity, clinic_id, clinic, active)
-      VALUES (?, ?, ?, ?, ?, 0, ?, ?, 1)
-    `).run(slot.date, slot.time, slot.species, slot.sex, slot.total_quantity, slot.clinic_id, slot.clinic);
-    res.status(201).json({ slot: getSlot(result.lastInsertRowid) });
+    db.exec('BEGIN IMMEDIATE');
+    try {
+      const result = db.prepare(`
+        INSERT INTO slots (date, time, species, sex, total_quantity, occupied_quantity, clinic_id, clinic, active)
+        VALUES (?, ?, ?, ?, ?, 0, ?, ?, 1)
+      `).run(slot.date, slot.time, slot.species, slot.sex, slot.total_quantity, slot.clinic_id, slot.clinic);
+      const createdSlot = getSlot(result.lastInsertRowid);
+      auditSlotAction('created', req.user, createdSlot, { details: 'Criada manualmente.' });
+      db.exec('COMMIT');
+      res.status(201).json({ slot: createdSlot });
+    } catch (err) {
+      db.exec('ROLLBACK');
+      throw err;
+    }
   } catch (error) {
     sendError(res, error);
   }
@@ -810,12 +855,25 @@ app.put('/api/admin/slots/:id', requireAdmin, (req, res) => {
     if (slot.total_quantity < current.occupied_quantity) {
       throw httpError(400, 'A quantidade total não pode ser menor que as vagas já ocupadas.');
     }
-    db.prepare(`
-      UPDATE slots
-      SET date = ?, time = ?, species = ?, sex = ?, total_quantity = ?, clinic_id = ?, clinic = ?, active = ?, updated_at = CURRENT_TIMESTAMP
-      WHERE id = ?
-    `).run(slot.date, slot.time, slot.species, slot.sex, slot.total_quantity, slot.clinic_id, slot.clinic, req.body.active ? 1 : 0, req.params.id);
-    res.json({ slot: getSlot(req.params.id) });
+    db.exec('BEGIN IMMEDIATE');
+    try {
+      const active = req.body.active ? 1 : 0;
+      db.prepare(`
+        UPDATE slots
+        SET date = ?, time = ?, species = ?, sex = ?, total_quantity = ?, clinic_id = ?, clinic = ?, active = ?, updated_at = CURRENT_TIMESTAMP
+        WHERE id = ?
+      `).run(slot.date, slot.time, slot.species, slot.sex, slot.total_quantity, slot.clinic_id, slot.clinic, active, req.params.id);
+      const updatedSlot = getSlot(req.params.id);
+      const action = current.active && !active ? 'deactivated' : 'updated';
+      auditSlotAction(action, req.user, updatedSlot, {
+        details: action === 'updated' ? `Dados anteriores: ${slotAuditSummary(current)}` : null
+      });
+      db.exec('COMMIT');
+      res.json({ slot: updatedSlot });
+    } catch (err) {
+      db.exec('ROLLBACK');
+      throw err;
+    }
   } catch (error) {
     sendError(res, error);
   }
@@ -833,6 +891,7 @@ app.delete('/api/admin/slots/:id', requireAdmin, (req, res) => {
       db.exec('BEGIN IMMEDIATE');
       try {
         db.prepare(`DELETE FROM appointments WHERE slot_id = ? AND status = 'cancelado'`).run(req.params.id);
+        auditSlotAction('deleted', req.user, current);
         db.prepare('DELETE FROM slots WHERE id = ?').run(req.params.id);
         db.exec('COMMIT');
       } catch (err) {
@@ -841,8 +900,17 @@ app.delete('/api/admin/slots/:id', requireAdmin, (req, res) => {
       }
       return res.json({ deleted: true });
     }
-    db.prepare('UPDATE slots SET active = 0, updated_at = CURRENT_TIMESTAMP WHERE id = ?').run(req.params.id);
-    res.json({ slot: getSlot(req.params.id) });
+    db.exec('BEGIN IMMEDIATE');
+    try {
+      db.prepare('UPDATE slots SET active = 0, updated_at = CURRENT_TIMESTAMP WHERE id = ?').run(req.params.id);
+      const deactivatedSlot = getSlot(req.params.id);
+      auditSlotAction('deactivated', req.user, deactivatedSlot);
+      db.exec('COMMIT');
+      res.json({ slot: deactivatedSlot });
+    } catch (err) {
+      db.exec('ROLLBACK');
+      throw err;
+    }
   } catch (error) {
     sendError(res, error);
   }
@@ -1017,9 +1085,9 @@ app.listen(PORT, LISTEN_HOST, () => {
 async function bootstrap() {
   initSchema();
   await seedDatabase();
-  autoRenewSlots();
+  auditAutoRenewResult(autoRenewSlots());
   // Check daily — idempotent, skips when day < 25 or slots already exist
-  setInterval(() => autoRenewSlots(), 24 * 60 * 60 * 1000);
+  setInterval(() => auditAutoRenewResult(autoRenewSlots()), 24 * 60 * 60 * 1000);
 }
 
 function formatDateBR(dateStr) {
@@ -1668,6 +1736,53 @@ function getSlot(id) {
     WHERE s.id = ?
   `).get(id);
   return slot ? { ...slot, label: animalTypeLabel(slot.species, slot.sex) } : null;
+}
+
+function auditSlotAction(action, actor, slot, options = {}) {
+  db.prepare(`
+    INSERT INTO slot_audit_logs (
+      slot_id, action, actor_user_id, actor_name, actor_cpf,
+      slot_date, slot_time, species, sex, total_quantity, occupied_quantity,
+      clinic_id, clinic_name, slot_active, release_month, release_at, details
+    )
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+  `).run(
+    slot?.id ?? null,
+    action,
+    actor?.id ?? null,
+    actor?.name || 'Sistema automático',
+    actor?.cpf || null,
+    slot?.date || null,
+    slot?.time || null,
+    slot?.species || null,
+    slot?.sex || null,
+    slot?.total_quantity ?? null,
+    slot?.occupied_quantity ?? null,
+    slot?.clinic_id ?? null,
+    slot?.clinic || null,
+    slot?.active ?? null,
+    options.releaseMonth || null,
+    options.releaseAt || null,
+    options.details || null
+  );
+}
+
+function auditAutoRenewResult(result, actor = null) {
+  for (const id of result?.createdSlotIds || []) {
+    const slot = getSlot(id);
+    if (slot) auditSlotAction('renewed', actor, slot, { details: 'Renovação mensal automática.' });
+  }
+  return result;
+}
+
+function slotAuditSummary(slot) {
+  return [
+    `${slot.date} ${slot.time}`,
+    animalTypeLabel(slot.species, slot.sex),
+    slot.clinic,
+    `${slot.total_quantity} vaga(s)`,
+    slot.active ? 'ativa' : 'inativa'
+  ].join(' · ');
 }
 
 function getClinic(id) {

@@ -131,6 +131,36 @@ export function initSchema() {
       created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
       updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
     );
+
+    CREATE TABLE IF NOT EXISTS slot_audit_logs (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      slot_id INTEGER,
+      action TEXT NOT NULL CHECK (action IN (
+        'created', 'renewed', 'updated', 'deactivated', 'deleted',
+        'month_published', 'month_scheduled', 'month_hidden'
+      )),
+      actor_user_id INTEGER REFERENCES users(id) ON DELETE SET NULL,
+      actor_name TEXT NOT NULL,
+      actor_cpf TEXT,
+      slot_date TEXT,
+      slot_time TEXT,
+      species TEXT,
+      sex TEXT,
+      total_quantity INTEGER,
+      occupied_quantity INTEGER,
+      clinic_id INTEGER,
+      clinic_name TEXT,
+      slot_active INTEGER,
+      release_month TEXT,
+      release_at TEXT,
+      details TEXT,
+      event_at TEXT NOT NULL DEFAULT (datetime('now', 'localtime'))
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_slot_audit_logs_event_at
+      ON slot_audit_logs(event_at DESC, id DESC);
+    CREATE INDEX IF NOT EXISTS idx_slot_audit_logs_slot_id
+      ON slot_audit_logs(slot_id);
   `);
 
   migrateUsersForClinicRole();
@@ -154,6 +184,7 @@ export function initSchema() {
   ensureColumn('appointments', 'responsible_email', 'TEXT');
   ensureColumn('appointments', 'responsible_city_confirmed', 'INTEGER NOT NULL DEFAULT 0');
   ensureColumn('appointments', 'responsible_adult_confirmed', 'INTEGER NOT NULL DEFAULT 0');
+  removeLegacySlotAuditLogs();
   db.exec(`CREATE UNIQUE INDEX IF NOT EXISTS idx_appointments_microchip ON appointments(microchip) WHERE microchip IS NOT NULL`);
   migrateGlobalSlotReleaseToMonths();
 }
@@ -171,6 +202,15 @@ function ensureColumn(table, column, definition) {
   if (!columns.some((item) => item.name === column)) {
     db.exec(`ALTER TABLE ${table} ADD COLUMN ${column} ${definition}`);
   }
+}
+
+function removeLegacySlotAuditLogs() {
+  db.prepare(`
+    DELETE FROM slot_audit_logs
+    WHERE action = 'created'
+      AND actor_name = 'Não registrado (anterior aos logs)'
+      AND details = 'Registro inicial criado automaticamente ao ativar a auditoria.'
+  `).run();
 }
 
 function migrateGlobalSlotReleaseToMonths() {
@@ -463,6 +503,7 @@ export function autoRenewSlots() {
   `).all(currentYM);
 
   let created = 0;
+  const createdSlotIds = [];
   db.exec('BEGIN IMMEDIATE');
   try {
     for (const slot of currentSlots) {
@@ -473,10 +514,11 @@ export function autoRenewSlots() {
           AND clinic_id IS ? AND clinic IS ?
       `).get(nextYM, slot.time, slot.species, slot.sex, slot.clinic_id, slot.clinic);
       if (!existing) {
-        db.prepare(`
+        const result = db.prepare(`
           INSERT INTO slots (date, time, species, sex, total_quantity, occupied_quantity, clinic_id, clinic, active)
           VALUES (?, ?, ?, ?, ?, 0, ?, ?, 1)
         `).run(slot.next_date, slot.time, slot.species, slot.sex, slot.total_quantity, slot.clinic_id, slot.clinic);
+        createdSlotIds.push(Number(result.lastInsertRowid));
         created++;
       }
     }
@@ -486,7 +528,7 @@ export function autoRenewSlots() {
     throw err;
   }
   console.log(`[autoRenew] ${created} vagas criadas para ${nextYM}`);
-  return { created, nextMonth: nextYM };
+  return { created, nextMonth: nextYM, createdSlotIds };
 }
 
 export function toDateString(date) {
