@@ -365,28 +365,7 @@ O backend cria novas vagas em `slots` com `occupied_quantity = 0`, mantendo as v
 
 Compatibilidade: o backend ainda aceita o formato antigo com apenas `ids`. Nesse caso, ele clona a vaga para `date + 1 month`, mantendo horario, tipo, clinica e quantidade original.
 
-### Renovacao Automatica Mensal
-
-Endpoint:
-
-```text
-POST /api/admin/slots/auto-renew
-```
-
-Helper:
-
-```text
-autoRenewSlots()
-```
-
-Comportamento:
-
-- So executa a partir do dia 25 do mes.
-- Clona vagas ativas do mes atual para o mes seguinte.
-- Mantem data equivalente, horario, tipo, clinica e total.
-- Cria vagas com `occupied_quantity = 0`.
-- E idempotente: nao duplica vaga que ja existe com os mesmos dados.
-- Tambem e chamado no bootstrap do servidor uma vez por dia.
+Nao existe criacao ou renovacao automatica de vagas no bootstrap, em timers ou no seed do banco. Toda insercao em `slots` exige uma rota autenticada com perfil de administrador.
 
 ### Troca de Senha (Protetor e Clinica)
 
@@ -462,7 +441,6 @@ Comportamento:
 | PUT | `/api/admin/slots/releases/:month` | Publicar agora, ocultar ou agendar a publicacao de um mes |
 | GET | `/api/admin/slot-logs` | Listar o historico administrativo de vagas e publicacoes |
 | POST | `/api/admin/slots/renew` | Renovar vagas selecionadas com novos dados |
-| POST | `/api/admin/slots/auto-renew` | Renovacao automatica mensal |
 | GET/POST/PUT | `/api/admin/users` | CRUD usuarios |
 | POST | `/api/admin/users/import` | Importar Excel/CSV de protetores |
 | GET | `/api/admin/protectors` | Listar protetores |

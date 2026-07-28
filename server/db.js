@@ -192,7 +192,6 @@ export function initSchema() {
 export async function seedDatabase() {
   seedAdmin();
   seedClinics();
-  seedSlots();
   migrateSlotClinics();
   await seedProtectorsFromDownloads();
 }
@@ -298,66 +297,6 @@ function seedClinics() {
   `);
   insert.run('Castramovel', 'Unidade movel - endereco definido pela administracao', 'Nova Iguacu', '',);
   insert.run('Clinica TAK VET', 'Endereco da Clinica TAK VET a cadastrar', 'Nova Iguacu', '',);
-}
-
-function seedSlots() {
-  const alreadySeeded = db.prepare(`SELECT value FROM settings WHERE key = 'slots_seeded'`).get();
-  if (alreadySeeded) return;
-  db.prepare(`INSERT OR IGNORE INTO settings (key, value) VALUES ('slots_seeded', '1')`).run();
-
-  const insert = db.prepare(`
-    INSERT OR IGNORE INTO slots (date, time, species, sex, total_quantity, occupied_quantity, clinic_id, clinic)
-    VALUES (?, ?, ?, ?, ?, 0, ?, ?)
-  `);
-  const castramovelId = getClinicIdByName('Castramovel');
-  const takVetId = getClinicIdByName('Clinica TAK VET');
-
-  const base = nextDateForWeekday(new Date(), 3);
-  for (let week = 0; week < 3; week += 1) {
-    const wednesday = addDays(base, week * 7);
-    const thursday = addDays(wednesday, 1);
-    const friday = addDays(wednesday, 2);
-
-    [
-      ['09:00', 5, 'gato', 'femea'],
-      ['10:00', 5, 'gato', 'femea'],
-      ['11:00', 5, 'gato', 'femea'],
-      ['13:00', 5, 'gato', 'femea'],
-      ['14:00', 7, 'gato', 'macho'],
-      ['15:00', 7, 'gato', 'macho']
-    ].forEach(([time, quantity, species, sex]) => {
-      insert.run(toDateString(wednesday), time, species, sex, quantity, castramovelId, 'Castramovel');
-    });
-
-    [thursday, friday].forEach((date) => {
-      [
-        ['09:00', 5, 'cao', 'femea'],
-        ['10:00', 5, 'cao', 'femea'],
-        ['11:00', 5, 'cao', 'macho'],
-        ['13:00', 5, 'cao', 'femea'],
-        ['14:00', 2, 'cao', 'femea'],
-        ['14:00', 2, 'cao', 'macho'],
-        ['15:00', 3, 'cao', 'macho']
-      ].forEach(([time, quantity, species, sex]) => {
-        insert.run(toDateString(date), time, species, sex, quantity, castramovelId, 'Castramovel');
-      });
-    });
-  }
-
-  const takBase = nextDateForWeekday(addDays(new Date(), 7), 2);
-  const takPatterns = [
-    { offset: 0, species: 'cao', sex: 'femea', quantities: [2, 2, 2, 2, 2, 2, 2, 2] },
-    { offset: 1, species: 'cao', sex: 'macho', quantities: [2, 2, 2, 2, 2, 2, 2, 2] },
-    { offset: 2, species: 'gato', sex: 'femea', quantities: [3, 2, 3, 2, 3, 2, 3, 2] },
-    { offset: 9, species: 'gato', sex: 'macho', quantities: [3, 2, 3, 2, 3, 2, 3, 2] }
-  ];
-  const times = ['09:00', '10:00', '11:00', '13:00', '14:00', '15:00', '16:00', '17:00'];
-  takPatterns.forEach((pattern) => {
-    const date = toDateString(addDays(takBase, pattern.offset));
-    times.forEach((time, index) => {
-      insert.run(date, time, pattern.species, pattern.sex, pattern.quantities[index], takVetId, 'Clinica TAK VET');
-    });
-  });
 }
 
 function migrateSlotClinics() {
@@ -483,72 +422,11 @@ export function monthRange(dateString) {
   return { start, end };
 }
 
-// Clones all active slots from current month into next month.
-// Safe to call multiple times - skips slots that already exist.
-// Only acts when day >= 25.
-export function autoRenewSlots() {
-  const today = db.prepare("SELECT date('now', 'localtime') AS d").get().d;
-  const day = parseInt(today.slice(8, 10), 10);
-  if (day < 25) return { skipped: true };
-
-  const currentYM = today.slice(0, 7);
-  const [y, m] = currentYM.split('-').map(Number);
-  const nextDate = new Date(y, m, 1);
-  const nextYM = `${nextDate.getFullYear()}-${String(nextDate.getMonth() + 1).padStart(2, '0')}`;
-
-  const currentSlots = db.prepare(`
-    SELECT *, date(date, '+1 month') AS next_date
-    FROM slots
-    WHERE active = 1 AND strftime('%Y-%m', date) = ?
-  `).all(currentYM);
-
-  let created = 0;
-  const createdSlotIds = [];
-  db.exec('BEGIN IMMEDIATE');
-  try {
-    for (const slot of currentSlots) {
-      const existing = db.prepare(`
-        SELECT id FROM slots
-        WHERE strftime('%Y-%m', date) = ?
-          AND time = ? AND species = ? AND sex = ?
-          AND clinic_id IS ? AND clinic IS ?
-      `).get(nextYM, slot.time, slot.species, slot.sex, slot.clinic_id, slot.clinic);
-      if (!existing) {
-        const result = db.prepare(`
-          INSERT INTO slots (date, time, species, sex, total_quantity, occupied_quantity, clinic_id, clinic, active)
-          VALUES (?, ?, ?, ?, ?, 0, ?, ?, 1)
-        `).run(slot.next_date, slot.time, slot.species, slot.sex, slot.total_quantity, slot.clinic_id, slot.clinic);
-        createdSlotIds.push(Number(result.lastInsertRowid));
-        created++;
-      }
-    }
-    db.exec('COMMIT');
-  } catch (err) {
-    db.exec('ROLLBACK');
-    throw err;
-  }
-  console.log(`[autoRenew] ${created} vagas criadas para ${nextYM}`);
-  return { created, nextMonth: nextYM, createdSlotIds };
-}
-
 export function toDateString(date) {
   const year = date.getFullYear();
   const month = String(date.getMonth() + 1).padStart(2, '0');
   const day = String(date.getDate()).padStart(2, '0');
   return `${year}-${month}-${day}`;
-}
-
-function addDays(date, amount) {
-  const next = new Date(date);
-  next.setDate(next.getDate() + amount);
-  return next;
-}
-
-function nextDateForWeekday(date, weekday) {
-  const next = new Date(date);
-  next.setHours(0, 0, 0, 0);
-  const diff = (weekday - next.getDay() + 7) % 7 || 7;
-  return addDays(next, diff);
 }
 
 function inferNeighborhood(address = '') {

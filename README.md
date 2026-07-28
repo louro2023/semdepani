@@ -18,7 +18,7 @@ API: `http://127.0.0.1:4000`
 - Administrador: CPF `00000000000`
 - Senha: `admin123`
 
-Na primeira execução o sistema cria o banco SQLite em `data/castracao.sqlite`, importa as protetoras do arquivo `PROTETORAS CADASTRADAS.docx` quando ele existir em `Downloads` e cadastra vagas iniciais inspiradas nos cronogramas do Castramóvel e da Clínica TAK VET.
+Na primeira execução o sistema cria o banco SQLite em `data/castracao.sqlite` e importa as protetoras do arquivo `PROTETORAS CADASTRADAS.docx` quando ele existir em `Downloads`. As vagas são cadastradas ou renovadas exclusivamente por um administrador.
 
 ## Regras implementadas
 

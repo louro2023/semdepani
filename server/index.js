@@ -12,7 +12,6 @@ import multer from 'multer';
 import nodemailer from 'nodemailer';
 import rateLimit from 'express-rate-limit';
 import {
-  autoRenewSlots,
   createProtocol,
   db,
   getUserByCpf,
@@ -757,16 +756,6 @@ app.get('/api/admin/slot-logs', requireAdmin, (_req, res) => {
   res.json({ logs });
 });
 
-app.post('/api/admin/slots/auto-renew', requireAdmin, (req, res) => {
-  try {
-    const result = autoRenewSlots();
-    auditAutoRenewResult(result, req.user);
-    res.json(result);
-  } catch (error) {
-    sendError(res, error);
-  }
-});
-
 app.post('/api/admin/slots/renew', requireAdmin, (req, res) => {
   try {
     const renewals = Array.isArray(req.body.renewals) ? req.body.renewals : null;
@@ -1085,9 +1074,6 @@ app.listen(PORT, LISTEN_HOST, () => {
 async function bootstrap() {
   initSchema();
   await seedDatabase();
-  auditAutoRenewResult(autoRenewSlots());
-  // Check daily — idempotent, skips when day < 25 or slots already exist
-  setInterval(() => auditAutoRenewResult(autoRenewSlots()), 24 * 60 * 60 * 1000);
 }
 
 function formatDateBR(dateStr) {
@@ -1765,14 +1751,6 @@ function auditSlotAction(action, actor, slot, options = {}) {
     options.releaseAt || null,
     options.details || null
   );
-}
-
-function auditAutoRenewResult(result, actor = null) {
-  for (const id of result?.createdSlotIds || []) {
-    const slot = getSlot(id);
-    if (slot) auditSlotAction('renewed', actor, slot, { details: 'Renovação mensal automática.' });
-  }
-  return result;
 }
 
 function slotAuditSummary(slot) {
