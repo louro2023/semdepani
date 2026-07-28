@@ -4,7 +4,7 @@ Sistema web de cadastro de tutores e agendamento automatico de castracao animal 
 
 Este arquivo documenta o estado atual do projeto, regras de negocio, rotas principais, cuidados de deploy e orientacoes para futuras alteracoes.
 
-Ultima atualizacao: 2026-06-26.
+Ultima atualizacao: 2026-07-28.
 
 ---
 
@@ -16,7 +16,7 @@ Ultima atualizacao: 2026-06-26.
 | Backend | Node.js ESM, Express 5, `node:sqlite` |
 | Banco | SQLite em `data/castracao.sqlite` com WAL mode |
 | Auth | JWT + bcrypt |
-| E-mail | nodemailer, opcional via SMTP |
+| E-mail | nodemailer via SMTP, obrigatorio para recuperacao de senha |
 | Upload | Multer ainda existe no backend para documentos legados |
 | Icones | Lucide React |
 | CEP | BrasilAPI via backend: `https://brasilapi.com.br/api/cep/v1/{cep}` |
@@ -82,6 +82,13 @@ dist/               Build Vite, gerado localmente/producao
 - Meses sem publicacao configurada permanecem ocultos do publico.
 - API: rotas `/api` desconhecidas retornam JSON de erro antes do fallback da SPA, evitando resposta HTML em chamadas do frontend.
 - Auditoria: removidos import/funcao sem uso (`Plus` no frontend e `bookingTargetMonth` no banco).
+- Auditoria administrativa de vagas com filtros por acao, clinica, mes, administrador e data.
+- Criacao de vagas protegida contra insercoes automaticas ou sem autoria administrativa.
+- Remarcacao administrativa de agendamentos com troca transacional de vaga e notificacao ao tutor.
+- E-mail obrigatorio em novos cadastros; usuarios antigos sem e-mail precisam atualiza-lo depois do login.
+- Administrador pode cadastrar ou corrigir o e-mail na aba Usuarios.
+- Recuperacao de senha por token de uso unico para tutor, protetor e administrador.
+- Auditoria geral registra alteracoes administrativas de e-mail e remarcacoes com valores anteriores e novos.
 
 ---
 
@@ -113,7 +120,7 @@ Campos relevantes:
 | `address` | Endereco/logradouro |
 | `address_number` | Numero da residencia ou `S/N` |
 | `neighborhood` | Bairro |
-| `email` | Opcional |
+| `email` | Obrigatorio em novos cadastros publicos e usado na recuperacao de senha |
 | `doc_residencia`, `doc_cpf`, `doc_identidade` | Legado de upload de documentos |
 
 ### Tabela `slots`
@@ -131,6 +138,9 @@ Representa as vagas cadastradas pela administracao.
 | `clinic_id` | Clinica vinculada |
 | `clinic` | Texto legado com nome da clinica |
 | `active` | Se a vaga esta ativa |
+| `created_by_user_id` | Administrador responsavel pela criacao |
+| `creation_source` | `manual` ou `renewed` |
+| `renewed_from_slot_id` | Vaga original quando criada por renovacao |
 
 ### Tabela `appointments`
 
@@ -149,6 +159,10 @@ Outras tabelas:
 - `animals`: animais do usuario.
 - `settings`: chaves internas de seed/importacao.
 - `slot_release_months`: mes (`YYYY-MM`) e data/hora em que suas vagas se tornam publicas.
+- `slot_audit_logs`: historico imutavel de criacao, renovacao, edicao, desativacao, exclusao e publicacao de vagas, com administrador e fotografia dos dados no momento da acao. Registra somente acoes ocorridas depois da implantacao da auditoria; vagas antigas nao sao importadas retroativamente.
+- `user_notifications`: notificacoes persistentes do usuario, incluindo remarcacoes administrativas com dados anteriores e novos.
+- `password_reset_tokens`: hashes dos tokens de recuperacao, prazo de validade e momento de uso. Nunca armazena o token bruto.
+- `admin_audit_logs`: auditoria de alteracoes de e-mail e remarcacoes, com administrador, usuario afetado, protocolo e dados anteriores/novos.
 
 ### Migracoes Automaticas Existentes
 
@@ -188,6 +202,40 @@ Coluna automatica em `slots`:
 - `clinic_id INTEGER REFERENCES clinics(id)`
 
 Tambem existe `migrateSlotClinics()`, que tenta preencher `slots.clinic_id` em vagas antigas usando o texto legado `slots.clinic`.
+
+### Orientacoes Obrigatorias para Ajustes no Banco
+
+Toda IA ou pessoa que alterar o banco deve seguir estas regras:
+
+1. Ler `server/db.js` inteiro e identificar `initSchema()`, `ensureColumn()`, migracoes, triggers, indices e seeds antes de editar.
+2. Nunca versionar, substituir ou copiar para o servidor os arquivos `data/castracao.sqlite`, `-wal` e `-shm`.
+3. Toda mudanca de schema deve ser idempotente e executavel sobre um banco existente com dados. Preferir `CREATE TABLE/INDEX IF NOT EXISTS`, `ensureColumn()` ou uma funcao de migracao protegida por verificacao.
+4. Nunca remover ou renomear tabela/coluna com dados sem uma migracao transacional explicita, copia validada dos dados e plano de rollback.
+5. Criar chaves estrangeiras, indices e `CHECK` coerentes com as regras do backend. Manter `PRAGMA foreign_keys = ON`.
+6. Operacoes que atualizam varias tabelas ou contadores devem usar `BEGIN IMMEDIATE`, `COMMIT` e `ROLLBACK`.
+7. Nunca ajustar `slots.occupied_quantity` isoladamente sem conferir os agendamentos ativos relacionados.
+8. Nao inserir vagas diretamente. Toda vaga deve ter `created_by_user_id` de admin ativo e `creation_source` (`manual` ou `renewed`); as triggers bloqueiam qualquer outra origem.
+9. Tokens de senha devem continuar armazenados somente como SHA-256 em `password_reset_tokens`; nunca registrar o token bruto, senha ou segredo SMTP.
+10. Testar a migracao primeiro em banco temporario ou copia consistente, nunca diretamente no banco unico de producao.
+
+Antes do deploy:
+
+```bash
+npm run build
+node --check server/index.js
+node --check server/db.js
+```
+
+Depois do restart, verificar:
+
+```bash
+sqlite3 "$DB_PATH" "PRAGMA integrity_check;"
+sqlite3 "$DB_PATH" "PRAGMA foreign_key_check;"
+sqlite3 "$DB_PATH" "SELECT name FROM sqlite_master WHERE type='table' ORDER BY name;"
+sqlite3 "$DB_PATH" "SELECT s.id, s.occupied_quantity, COUNT(a.id) AS ativos FROM slots s LEFT JOIN appointments a ON a.slot_id=s.id AND a.status!='cancelado' GROUP BY s.id HAVING s.occupied_quantity!=COUNT(a.id);"
+```
+
+O ultimo comando deve retornar zero linhas. Se houver divergencia, nao corrigir automaticamente: investigar cancelamentos, remarcacoes e status antes de qualquer `UPDATE`.
 
 ---
 
@@ -342,6 +390,8 @@ Datas nos formularios aparecem como `DD/MM/AAAA`.
 
 Horarios nos formularios aparecem como `HH:MM` em formato 24 horas.
 
+Ao criar ou renovar, o backend rejeita datas no passado e horarios fora do intervalo `00:00` a `23:59`.
+
 ### Renovar Vagas Selecionadas
 
 Na aba `Vagas`, ao selecionar uma ou mais vagas e clicar em `Renovar Vagas`, o sistema abre uma nova tela de renovacao.
@@ -364,28 +414,9 @@ O backend cria novas vagas em `slots` com `occupied_quantity = 0`, mantendo as v
 
 Compatibilidade: o backend ainda aceita o formato antigo com apenas `ids`. Nesse caso, ele clona a vaga para `date + 1 month`, mantendo horario, tipo, clinica e quantidade original.
 
-### Renovacao Automatica Mensal
+Nao existe criacao ou renovacao automatica de vagas no bootstrap, em timers ou no seed do banco. Toda insercao em `slots` exige uma rota autenticada com perfil de administrador.
 
-Endpoint:
-
-```text
-POST /api/admin/slots/auto-renew
-```
-
-Helper:
-
-```text
-autoRenewSlots()
-```
-
-Comportamento:
-
-- So executa a partir do dia 25 do mes.
-- Clona vagas ativas do mes atual para o mes seguinte.
-- Mantem data equivalente, horario, tipo, clinica e total.
-- Cria vagas com `occupied_quantity = 0`.
-- E idempotente: nao duplica vaga que ja existe com os mesmos dados.
-- Tambem e chamado no bootstrap do servidor uma vez por dia.
+O SQLite tambem protege a tabela com triggers de auditoria. Novas vagas precisam informar `created_by_user_id` de um administrador ativo e `creation_source` como `manual` ou `renewed`. Uma insercao sem autoria administrativa valida e registrada como `system_blocked` em `slot_audit_logs` e a vaga e removida na mesma operacao, antes de poder ser exibida ou publicada.
 
 ### Troca de Senha (Protetor e Clinica)
 
@@ -435,13 +466,17 @@ Comportamento:
 | GET | `/api/public/cpf-status?cpf=` | Verifica CPF ja cadastrado |
 | GET | `/api/public/cep/:cep` | Consulta CEP e valida Nova Iguacu via BrasilAPI |
 | POST | `/api/auth/login` | Login |
-| POST | `/api/auth/register` | Cadastro do tutor, exige aceite dos termos |
+| POST | `/api/auth/register` | Cadastro do tutor, exige e-mail e aceite dos termos |
+| POST | `/api/auth/forgot-password` | Solicita recuperacao por e-mail; sem e-mail direciona tutor ao WhatsApp |
+| GET | `/api/auth/reset-password/:token` | Valida token e informa o perfil |
+| POST | `/api/auth/reset-password` | Consome token de uso unico e grava nova senha |
 
 ### Autenticadas
 
 | Metodo | Rota | Descricao |
 |--------|------|-----------|
 | GET | `/api/me` | Usuario logado, limite mensal e agendamentos |
+| PATCH | `/api/me/email` | Tutor/protetor legado vincula e-mail obrigatorio |
 | PUT | `/api/me/password` | Troca de senha propria, apenas protetor e clinica |
 | POST | `/api/appointments/auto` | Novo agendamento para tutor/protetor/admin |
 | POST | `/api/appointments/:id/cancel` | Cancelar agendamento proprio ou admin |
@@ -453,15 +488,17 @@ Comportamento:
 | GET | `/api/admin/appointments` | Admin ve todos; clinica ve apenas a vinculada |
 | GET | `/api/admin/appointments?clinicId=ID` | Admin filtra por clinica |
 | PATCH | `/api/admin/appointments/:id/status` | Atualiza status; status `realizado` exige `microchip` |
+| PUT | `/api/admin/appointments/:id/reschedule` | Admin troca clinica/data/horario e notifica o tutor |
 | GET/POST | `/api/admin/clinics` | Listar/criar clinicas |
 | PUT/DELETE | `/api/admin/clinics/:id` | Editar/desativar/excluir clinica |
 | GET/POST | `/api/admin/slots` | Listar/criar vagas |
 | PUT/DELETE | `/api/admin/slots/:id` | Editar/desativar/excluir vaga |
 | GET | `/api/admin/slots/releases` | Listar estado de publicacao de todos os meses com vagas |
 | PUT | `/api/admin/slots/releases/:month` | Publicar agora, ocultar ou agendar a publicacao de um mes |
+| GET | `/api/admin/slot-logs` | Listar o historico administrativo de vagas e publicacoes |
+| GET | `/api/admin/audit-logs` | Listar alteracoes de e-mail e remarcacoes feitas por administradores |
 | POST | `/api/admin/slots/renew` | Renovar vagas selecionadas com novos dados |
-| POST | `/api/admin/slots/auto-renew` | Renovacao automatica mensal |
-| GET/POST/PUT | `/api/admin/users` | CRUD usuarios |
+| GET/POST/PUT | `/api/admin/users` | CRUD usuarios, incluindo cadastro/correcao de e-mail |
 | POST | `/api/admin/users/import` | Importar Excel/CSV de protetores |
 | GET | `/api/admin/protectors` | Listar protetores |
 | GET | `/api/admin/summary` | Metricas |
@@ -569,6 +606,8 @@ Demais regras mantidas:
 - Informar medicamentos ao veterinario.
 - Vacinados ha menos de 21 dias nao podem ser castrados.
 - Residencia obrigatoria em Nova Iguacu.
+- E-mail valido obrigatorio para novos tutores.
+- Tutor/protetor antigo sem e-mail deve vincula-lo depois do login antes de agendar.
 - Levar copias de identidade, CPF e comprovante de residencia de Nova Iguacu no dia.
 
 ---
@@ -604,15 +643,13 @@ Se o deploy usar `DB_PATH`, confirme que a variavel aponta para o banco correto 
 
 Mesmo que a versao atual nao exija migracao nova, mantenha o procedimento de backup quando houver alteracao de schema:
 
-```bash
-cp data/castracao.sqlite data/castracao.sqlite.bak-$(date +%F-%H%M)
-```
-
-Se usar `DB_PATH`:
+Como o banco usa WAL, nao copiar apenas o arquivo principal enquanto a aplicacao esta escrevendo. Preferir a API de backup do SQLite:
 
 ```bash
-cp "$DB_PATH" "$DB_PATH.bak-$(date +%F-%H%M)"
+sqlite3 "$DB_PATH" ".backup '$DB_PATH.bak-$(date +%F-%H%M)'"
 ```
+
+Se o binario `sqlite3` nao estiver disponivel, parar a aplicacao antes de copiar o banco e seus arquivos WAL/SHM, validar o backup e somente depois iniciar novamente.
 
 ### Verificar Colunas
 
@@ -734,6 +771,46 @@ https://brasilapi.com.br/api/cep/v1/{cep}
 
 Se o servidor de producao nao tiver saida HTTPS, o cadastro por CEP vai falhar com mensagem de consulta indisponivel.
 
+### Enderecamentos e URLs em Producao
+
+Antes de publicar, toda IA deve procurar e eliminar enderecos de desenvolvimento da configuracao de producao:
+
+- `localhost`, `127.0.0.1` e portas Vite (`5173`) nunca podem aparecer em links enviados aos usuarios.
+- Definir `APP_BASE_URL` com a URL HTTPS publica exata, sem barra final. Exemplo: `https://castracao.novaiguacu.rj.gov.br`.
+- `APP_BASE_URL` e usada no link de redefinicao de senha. Se estiver errada, o e-mail chega, mas o usuario nao consegue abrir a tela.
+- O frontend chama caminhos relativos `/api`; o proxy reverso deve encaminhar `/api/*` para o Node na porta definida por `PORT`.
+- O restante das rotas deve servir o build em `dist/` e manter o fallback da SPA para `index.html`, inclusive `/?resetToken=...`.
+- `LISTEN_HOST=0.0.0.0` e apropriado atras de proxy/contêiner; nao expor a porta Node diretamente na internet.
+- Manter HTTPS no proxy e encaminhar corretamente `Host` e `X-Forwarded-Proto`. O Express ja usa `trust proxy`.
+- Liberar saida TCP/587 para `smtp.gmail.com` e HTTPS/443 para a BrasilAPI.
+
+Exemplo Nginx:
+
+```nginx
+server {
+    listen 443 ssl http2;
+    server_name castracao.novaiguacu.rj.gov.br;
+
+    location / {
+        proxy_pass http://127.0.0.1:4000;
+        proxy_set_header Host $host;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+    }
+}
+```
+
+Checklist depois do deploy:
+
+```bash
+curl -fsS https://SEU_DOMINIO/api/health
+curl -i -X POST https://SEU_DOMINIO/api/auth/forgot-password \
+  -H 'Content-Type: application/json' \
+  --data '{"cpf":"CPF_DE_TESTE"}'
+```
+
+Confirmar no e-mail recebido que o botao aponta para `https://SEU_DOMINIO/?resetToken=...`, nunca para localhost ou para a porta interna.
+
 ---
 
 ## Variaveis de Ambiente
@@ -746,8 +823,9 @@ Obrigatorias/recomendadas em producao:
 - `PORT`
 - `DB_PATH`
 - `LISTEN_HOST`
+- `APP_BASE_URL`
 
-E-mail opcional:
+E-mail obrigatorio para recuperacao de senha:
 
 - `SMTP_HOST`
 - `SMTP_PORT`
@@ -755,7 +833,24 @@ E-mail opcional:
 - `SMTP_PASS`
 - `SMTP_FROM`
 
-Sem `SMTP_HOST`, envio de e-mail fica desativado.
+Configuracao SMTP atual:
+
+```dotenv
+SMTP_HOST=smtp.gmail.com
+SMTP_PORT=587
+SMTP_USER=trocasenhacastra@novaiguacu.rj.gov.br
+SMTP_FROM=Castração Animal <trocasenhacastra@novaiguacu.rj.gov.br>
+```
+
+`SMTP_PASS` e segredo. Deve existir no `.env` do servidor ou no gerenciador de segredos, nunca em arquivo versionado. Sem SMTP valido, a API retorna `503` e invalida o token que nao foi enviado.
+
+### Segredos e Arquivos `.env`
+
+- `.env` e `.env.local` nunca devem ser removidos do `.gitignore`.
+- Versionar apenas `.env.example`, sem senhas reais, tokens JWT, CPF/senha do admin ou banco.
+- Um repositorio privado nao torna seguro um segredo que ja passou pelo historico Git.
+- Se um segredo for commitado acidentalmente, remover do historico nao basta: revogar e gerar outro imediatamente.
+- Segredos cadastrados no GitHub ficam criptografados, mas so chegam ao processo de producao se o pipeline ou servidor os exportar para o runtime.
 
 ---
 

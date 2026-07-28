@@ -90,6 +90,9 @@ export function initSchema() {
       clinic_id INTEGER REFERENCES clinics(id),
       clinic TEXT NOT NULL,
       active INTEGER NOT NULL DEFAULT 1,
+      created_by_user_id INTEGER REFERENCES users(id) ON DELETE SET NULL,
+      creation_source TEXT,
+      renewed_from_slot_id INTEGER,
       created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
       updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
       UNIQUE(date, time, species, sex, clinic)
@@ -131,10 +134,104 @@ export function initSchema() {
       created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
       updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
     );
+
+    CREATE TABLE IF NOT EXISTS slot_audit_logs (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      slot_id INTEGER,
+      action TEXT NOT NULL CHECK (action IN (
+        'created', 'renewed', 'updated', 'deactivated', 'deleted',
+        'month_published', 'month_scheduled', 'month_hidden', 'system_blocked'
+      )),
+      actor_user_id INTEGER REFERENCES users(id) ON DELETE SET NULL,
+      actor_name TEXT NOT NULL,
+      actor_cpf TEXT,
+      slot_date TEXT,
+      slot_time TEXT,
+      species TEXT,
+      sex TEXT,
+      total_quantity INTEGER,
+      occupied_quantity INTEGER,
+      clinic_id INTEGER,
+      clinic_name TEXT,
+      slot_active INTEGER,
+      release_month TEXT,
+      release_at TEXT,
+      details TEXT,
+      event_at TEXT NOT NULL DEFAULT (datetime('now', 'localtime'))
+    );
+
+    CREATE TABLE IF NOT EXISTS user_notifications (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      type TEXT NOT NULL CHECK (type IN ('appointment_rescheduled')),
+      appointment_id INTEGER REFERENCES appointments(id) ON DELETE CASCADE,
+      title TEXT NOT NULL,
+      message TEXT NOT NULL,
+      old_date TEXT,
+      old_time TEXT,
+      old_clinic TEXT,
+      new_date TEXT,
+      new_time TEXT,
+      new_clinic TEXT,
+      read_at TEXT,
+      created_at TEXT NOT NULL DEFAULT (datetime('now', 'localtime'))
+    );
+
+    CREATE TABLE IF NOT EXISTS password_reset_tokens (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      token_hash TEXT NOT NULL UNIQUE,
+      expires_at TEXT NOT NULL,
+      used_at TEXT,
+      created_at TEXT NOT NULL DEFAULT (datetime('now', 'localtime'))
+    );
+
+    CREATE TABLE IF NOT EXISTS admin_audit_logs (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      action TEXT NOT NULL CHECK (action IN ('email_changed', 'appointment_rescheduled')),
+      actor_user_id INTEGER REFERENCES users(id) ON DELETE SET NULL,
+      actor_name TEXT NOT NULL,
+      actor_cpf TEXT,
+      target_user_id INTEGER REFERENCES users(id) ON DELETE SET NULL,
+      target_user_name TEXT,
+      target_user_cpf TEXT,
+      appointment_id INTEGER REFERENCES appointments(id) ON DELETE SET NULL,
+      protocol TEXT,
+      old_email TEXT,
+      new_email TEXT,
+      old_slot_id INTEGER,
+      old_date TEXT,
+      old_time TEXT,
+      old_clinic TEXT,
+      new_slot_id INTEGER,
+      new_date TEXT,
+      new_time TEXT,
+      new_clinic TEXT,
+      details TEXT,
+      event_at TEXT NOT NULL DEFAULT (datetime('now', 'localtime'))
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_slot_audit_logs_event_at
+      ON slot_audit_logs(event_at DESC, id DESC);
+    CREATE INDEX IF NOT EXISTS idx_slot_audit_logs_slot_id
+      ON slot_audit_logs(slot_id);
+    CREATE INDEX IF NOT EXISTS idx_user_notifications_unread
+      ON user_notifications(user_id, read_at, created_at DESC);
+    CREATE INDEX IF NOT EXISTS idx_password_reset_tokens_lookup
+      ON password_reset_tokens(token_hash, expires_at, used_at);
+    CREATE INDEX IF NOT EXISTS idx_admin_audit_logs_event_at
+      ON admin_audit_logs(event_at DESC, id DESC);
+    CREATE INDEX IF NOT EXISTS idx_admin_audit_logs_action
+      ON admin_audit_logs(action, event_at DESC);
+    CREATE INDEX IF NOT EXISTS idx_admin_audit_logs_target_user
+      ON admin_audit_logs(target_user_id, event_at DESC);
   `);
 
   migrateUsersForClinicRole();
   ensureColumn('slots', 'clinic_id', 'INTEGER REFERENCES clinics(id)');
+  ensureColumn('slots', 'created_by_user_id', 'INTEGER REFERENCES users(id) ON DELETE SET NULL');
+  ensureColumn('slots', 'creation_source', 'TEXT');
+  ensureColumn('slots', 'renewed_from_slot_id', 'INTEGER');
   ensureColumn('users', 'clinic_id', 'INTEGER REFERENCES clinics(id)');
   ensureColumn('users', 'cep', 'TEXT');
   ensureColumn('users', 'address_number', 'TEXT');
@@ -154,6 +251,9 @@ export function initSchema() {
   ensureColumn('appointments', 'responsible_email', 'TEXT');
   ensureColumn('appointments', 'responsible_city_confirmed', 'INTEGER NOT NULL DEFAULT 0');
   ensureColumn('appointments', 'responsible_adult_confirmed', 'INTEGER NOT NULL DEFAULT 0');
+  migrateSlotAuditActions();
+  initSlotCreationGuards();
+  removeLegacySlotAuditLogs();
   db.exec(`CREATE UNIQUE INDEX IF NOT EXISTS idx_appointments_microchip ON appointments(microchip) WHERE microchip IS NOT NULL`);
   migrateGlobalSlotReleaseToMonths();
 }
@@ -161,7 +261,6 @@ export function initSchema() {
 export async function seedDatabase() {
   seedAdmin();
   seedClinics();
-  seedSlots();
   migrateSlotClinics();
   await seedProtectorsFromDownloads();
 }
@@ -171,6 +270,162 @@ function ensureColumn(table, column, definition) {
   if (!columns.some((item) => item.name === column)) {
     db.exec(`ALTER TABLE ${table} ADD COLUMN ${column} ${definition}`);
   }
+}
+
+function migrateSlotAuditActions() {
+  const table = db.prepare("SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'slot_audit_logs'").get();
+  if (table?.sql?.includes("'system_blocked'")) return;
+
+  db.exec('PRAGMA foreign_keys = OFF');
+  db.exec('BEGIN IMMEDIATE');
+  try {
+    db.exec(`
+      ALTER TABLE slot_audit_logs RENAME TO slot_audit_logs_old;
+
+      CREATE TABLE slot_audit_logs (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        slot_id INTEGER,
+        action TEXT NOT NULL CHECK (action IN (
+          'created', 'renewed', 'updated', 'deactivated', 'deleted',
+          'month_published', 'month_scheduled', 'month_hidden', 'system_blocked'
+        )),
+        actor_user_id INTEGER REFERENCES users(id) ON DELETE SET NULL,
+        actor_name TEXT NOT NULL,
+        actor_cpf TEXT,
+        slot_date TEXT,
+        slot_time TEXT,
+        species TEXT,
+        sex TEXT,
+        total_quantity INTEGER,
+        occupied_quantity INTEGER,
+        clinic_id INTEGER,
+        clinic_name TEXT,
+        slot_active INTEGER,
+        release_month TEXT,
+        release_at TEXT,
+        details TEXT,
+        event_at TEXT NOT NULL DEFAULT (datetime('now', 'localtime'))
+      );
+
+      INSERT INTO slot_audit_logs (
+        id, slot_id, action, actor_user_id, actor_name, actor_cpf,
+        slot_date, slot_time, species, sex, total_quantity, occupied_quantity,
+        clinic_id, clinic_name, slot_active, release_month, release_at, details, event_at
+      )
+      SELECT
+        id, slot_id, action, actor_user_id, actor_name, actor_cpf,
+        slot_date, slot_time, species, sex, total_quantity, occupied_quantity,
+        clinic_id, clinic_name, slot_active, release_month, release_at, details, event_at
+      FROM slot_audit_logs_old;
+
+      DROP TABLE slot_audit_logs_old;
+      CREATE INDEX idx_slot_audit_logs_event_at ON slot_audit_logs(event_at DESC, id DESC);
+      CREATE INDEX idx_slot_audit_logs_slot_id ON slot_audit_logs(slot_id);
+    `);
+    db.exec('COMMIT');
+  } catch (error) {
+    db.exec('ROLLBACK');
+    throw error;
+  } finally {
+    db.exec('PRAGMA foreign_keys = ON');
+  }
+}
+
+function initSlotCreationGuards() {
+  db.exec(`
+    DROP TRIGGER IF EXISTS audit_admin_slot_creation;
+    DROP TRIGGER IF EXISTS block_unauthorized_slot_creation;
+
+    CREATE TRIGGER audit_admin_slot_creation
+    AFTER INSERT ON slots
+    WHEN
+      NEW.created_by_user_id IS NOT NULL
+      AND NEW.creation_source IN ('manual', 'renewed')
+      AND (
+        (NEW.creation_source = 'manual' AND NEW.renewed_from_slot_id IS NULL)
+        OR (NEW.creation_source = 'renewed' AND NEW.renewed_from_slot_id IS NOT NULL)
+      )
+      AND EXISTS (
+        SELECT 1 FROM users
+        WHERE id = NEW.created_by_user_id AND role = 'admin' AND active = 1
+      )
+    BEGIN
+      INSERT INTO slot_audit_logs (
+        slot_id, action, actor_user_id, actor_name, actor_cpf,
+        slot_date, slot_time, species, sex, total_quantity, occupied_quantity,
+        clinic_id, clinic_name, slot_active, details
+      )
+      SELECT
+        NEW.id,
+        CASE WHEN NEW.creation_source = 'renewed' THEN 'renewed' ELSE 'created' END,
+        admin.id,
+        admin.name,
+        admin.cpf,
+        NEW.date,
+        NEW.time,
+        NEW.species,
+        NEW.sex,
+        NEW.total_quantity,
+        NEW.occupied_quantity,
+        NEW.clinic_id,
+        NEW.clinic,
+        NEW.active,
+        CASE
+          WHEN NEW.creation_source = 'renewed'
+            THEN printf('Criada pelo botão "Renovar Vagas", a partir da vaga #%d.', NEW.renewed_from_slot_id)
+          ELSE 'Criada manualmente.'
+        END
+      FROM users admin
+      WHERE admin.id = NEW.created_by_user_id;
+    END;
+
+    CREATE TRIGGER block_unauthorized_slot_creation
+    AFTER INSERT ON slots
+    WHEN NOT (
+      NEW.created_by_user_id IS NOT NULL
+      AND NEW.creation_source IN ('manual', 'renewed')
+      AND (
+        (NEW.creation_source = 'manual' AND NEW.renewed_from_slot_id IS NULL)
+        OR (NEW.creation_source = 'renewed' AND NEW.renewed_from_slot_id IS NOT NULL)
+      )
+      AND EXISTS (
+        SELECT 1 FROM users
+        WHERE id = NEW.created_by_user_id AND role = 'admin' AND active = 1
+      )
+    )
+    BEGIN
+      INSERT INTO slot_audit_logs (
+        slot_id, action, actor_name, slot_date, slot_time, species, sex,
+        total_quantity, occupied_quantity, clinic_id, clinic_name, slot_active, details
+      )
+      VALUES (
+        NEW.id,
+        'system_blocked',
+        'Sistema automático',
+        NEW.date,
+        NEW.time,
+        NEW.species,
+        NEW.sex,
+        NEW.total_quantity,
+        NEW.occupied_quantity,
+        NEW.clinic_id,
+        NEW.clinic,
+        0,
+        'Tentativa de criação sem ação válida de um administrador. A vaga foi bloqueada e removida automaticamente.'
+      );
+
+      DELETE FROM slots WHERE id = NEW.id;
+    END;
+  `);
+}
+
+function removeLegacySlotAuditLogs() {
+  db.prepare(`
+    DELETE FROM slot_audit_logs
+    WHERE action = 'created'
+      AND actor_name = 'Não registrado (anterior aos logs)'
+      AND details = 'Registro inicial criado automaticamente ao ativar a auditoria.'
+  `).run();
 }
 
 function migrateGlobalSlotReleaseToMonths() {
@@ -258,66 +513,6 @@ function seedClinics() {
   `);
   insert.run('Castramovel', 'Unidade movel - endereco definido pela administracao', 'Nova Iguacu', '',);
   insert.run('Clinica TAK VET', 'Endereco da Clinica TAK VET a cadastrar', 'Nova Iguacu', '',);
-}
-
-function seedSlots() {
-  const alreadySeeded = db.prepare(`SELECT value FROM settings WHERE key = 'slots_seeded'`).get();
-  if (alreadySeeded) return;
-  db.prepare(`INSERT OR IGNORE INTO settings (key, value) VALUES ('slots_seeded', '1')`).run();
-
-  const insert = db.prepare(`
-    INSERT OR IGNORE INTO slots (date, time, species, sex, total_quantity, occupied_quantity, clinic_id, clinic)
-    VALUES (?, ?, ?, ?, ?, 0, ?, ?)
-  `);
-  const castramovelId = getClinicIdByName('Castramovel');
-  const takVetId = getClinicIdByName('Clinica TAK VET');
-
-  const base = nextDateForWeekday(new Date(), 3);
-  for (let week = 0; week < 3; week += 1) {
-    const wednesday = addDays(base, week * 7);
-    const thursday = addDays(wednesday, 1);
-    const friday = addDays(wednesday, 2);
-
-    [
-      ['09:00', 5, 'gato', 'femea'],
-      ['10:00', 5, 'gato', 'femea'],
-      ['11:00', 5, 'gato', 'femea'],
-      ['13:00', 5, 'gato', 'femea'],
-      ['14:00', 7, 'gato', 'macho'],
-      ['15:00', 7, 'gato', 'macho']
-    ].forEach(([time, quantity, species, sex]) => {
-      insert.run(toDateString(wednesday), time, species, sex, quantity, castramovelId, 'Castramovel');
-    });
-
-    [thursday, friday].forEach((date) => {
-      [
-        ['09:00', 5, 'cao', 'femea'],
-        ['10:00', 5, 'cao', 'femea'],
-        ['11:00', 5, 'cao', 'macho'],
-        ['13:00', 5, 'cao', 'femea'],
-        ['14:00', 2, 'cao', 'femea'],
-        ['14:00', 2, 'cao', 'macho'],
-        ['15:00', 3, 'cao', 'macho']
-      ].forEach(([time, quantity, species, sex]) => {
-        insert.run(toDateString(date), time, species, sex, quantity, castramovelId, 'Castramovel');
-      });
-    });
-  }
-
-  const takBase = nextDateForWeekday(addDays(new Date(), 7), 2);
-  const takPatterns = [
-    { offset: 0, species: 'cao', sex: 'femea', quantities: [2, 2, 2, 2, 2, 2, 2, 2] },
-    { offset: 1, species: 'cao', sex: 'macho', quantities: [2, 2, 2, 2, 2, 2, 2, 2] },
-    { offset: 2, species: 'gato', sex: 'femea', quantities: [3, 2, 3, 2, 3, 2, 3, 2] },
-    { offset: 9, species: 'gato', sex: 'macho', quantities: [3, 2, 3, 2, 3, 2, 3, 2] }
-  ];
-  const times = ['09:00', '10:00', '11:00', '13:00', '14:00', '15:00', '16:00', '17:00'];
-  takPatterns.forEach((pattern) => {
-    const date = toDateString(addDays(takBase, pattern.offset));
-    times.forEach((time, index) => {
-      insert.run(date, time, pattern.species, pattern.sex, pattern.quantities[index], takVetId, 'Clinica TAK VET');
-    });
-  });
 }
 
 function migrateSlotClinics() {
@@ -443,70 +638,11 @@ export function monthRange(dateString) {
   return { start, end };
 }
 
-// Clones all active slots from current month into next month.
-// Safe to call multiple times - skips slots that already exist.
-// Only acts when day >= 25.
-export function autoRenewSlots() {
-  const today = db.prepare("SELECT date('now', 'localtime') AS d").get().d;
-  const day = parseInt(today.slice(8, 10), 10);
-  if (day < 25) return { skipped: true };
-
-  const currentYM = today.slice(0, 7);
-  const [y, m] = currentYM.split('-').map(Number);
-  const nextDate = new Date(y, m, 1);
-  const nextYM = `${nextDate.getFullYear()}-${String(nextDate.getMonth() + 1).padStart(2, '0')}`;
-
-  const currentSlots = db.prepare(`
-    SELECT *, date(date, '+1 month') AS next_date
-    FROM slots
-    WHERE active = 1 AND strftime('%Y-%m', date) = ?
-  `).all(currentYM);
-
-  let created = 0;
-  db.exec('BEGIN IMMEDIATE');
-  try {
-    for (const slot of currentSlots) {
-      const existing = db.prepare(`
-        SELECT id FROM slots
-        WHERE strftime('%Y-%m', date) = ?
-          AND time = ? AND species = ? AND sex = ?
-          AND clinic_id IS ? AND clinic IS ?
-      `).get(nextYM, slot.time, slot.species, slot.sex, slot.clinic_id, slot.clinic);
-      if (!existing) {
-        db.prepare(`
-          INSERT INTO slots (date, time, species, sex, total_quantity, occupied_quantity, clinic_id, clinic, active)
-          VALUES (?, ?, ?, ?, ?, 0, ?, ?, 1)
-        `).run(slot.next_date, slot.time, slot.species, slot.sex, slot.total_quantity, slot.clinic_id, slot.clinic);
-        created++;
-      }
-    }
-    db.exec('COMMIT');
-  } catch (err) {
-    db.exec('ROLLBACK');
-    throw err;
-  }
-  console.log(`[autoRenew] ${created} vagas criadas para ${nextYM}`);
-  return { created, nextMonth: nextYM };
-}
-
 export function toDateString(date) {
   const year = date.getFullYear();
   const month = String(date.getMonth() + 1).padStart(2, '0');
   const day = String(date.getDate()).padStart(2, '0');
   return `${year}-${month}-${day}`;
-}
-
-function addDays(date, amount) {
-  const next = new Date(date);
-  next.setDate(next.getDate() + amount);
-  return next;
-}
-
-function nextDateForWeekday(date, weekday) {
-  const next = new Date(date);
-  next.setHours(0, 0, 0, 0);
-  const diff = (weekday - next.getDay() + 7) % 7 || 7;
-  return addDays(next, diff);
 }
 
 function inferNeighborhood(address = '') {

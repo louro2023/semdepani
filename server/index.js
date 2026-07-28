@@ -12,7 +12,6 @@ import multer from 'multer';
 import nodemailer from 'nodemailer';
 import rateLimit from 'express-rate-limit';
 import {
-  autoRenewSlots,
   createProtocol,
   db,
   getUserByCpf,
@@ -48,6 +47,8 @@ const ROLE_LIMITS = {
   clinica: 0
 };
 const RESPONSIBLE_UPDATE_MIN_HOURS = 5;
+const PASSWORD_RESET_EXPIRY_MINUTES = 60;
+const EMAIL_SUPPORT_WHATSAPP_URL = `https://wa.me/552137663341?text=${encodeURIComponent('Olá, gostaria de vincular meu email ao meu usuario de Tutor do Castração Animal Online.')}`;
 
 const docUpload = multer({
   storage: multer.diskStorage({
@@ -111,6 +112,8 @@ app.use(express.json({ limit: '2mb' }));
 const authLimiter = rateLimit({ windowMs: 60_000, max: 15, standardHeaders: true, legacyHeaders: false });
 app.use('/api/auth/login', authLimiter);
 app.use('/api/auth/register', authLimiter);
+app.use('/api/auth/forgot-password', rateLimit({ windowMs: 15 * 60_000, max: 5, standardHeaders: true, legacyHeaders: false }));
+app.use('/api/auth/reset-password', rateLimit({ windowMs: 15 * 60_000, max: 10, standardHeaders: true, legacyHeaders: false }));
 app.use('/api/public/cpf-status', rateLimit({ windowMs: 60_000, max: 60, standardHeaders: true, legacyHeaders: false }));
 app.use('/api/public/inscricao', rateLimit({ windowMs: 60_000, max: 5, standardHeaders: true, legacyHeaders: false }));
 app.use('/api/me/password', rateLimit({ windowMs: 60_000, max: 5, standardHeaders: true, legacyHeaders: false }));
@@ -228,6 +231,100 @@ app.post('/api/auth/login', (req, res) => {
   res.json({ token: signToken(user), user: publicUser(user) });
 });
 
+app.post('/api/auth/forgot-password', async (req, res) => {
+  const genericResponse = {
+    message: 'Se o CPF estiver cadastrado com um e-mail válido, enviaremos as instruções para redefinir a senha.'
+  };
+  try {
+    const cpf = normalizeCpf(req.body?.cpf);
+    const user = isValidCpf(cpf) ? getUserByCpf(cpf) : null;
+    if (!user || !user.active || !user.password_hash || !['admin', 'tutor', 'protetor'].includes(user.role) || !isValidEmail(user.email)) {
+      return res.json({
+        message: 'Não foi possível enviar a recuperação por e-mail. Você será encaminhado ao atendimento para vincular seu e-mail.',
+        action: 'whatsapp',
+        whatsappUrl: EMAIL_SUPPORT_WHATSAPP_URL
+      });
+    }
+
+    const rawToken = crypto.randomBytes(32).toString('hex');
+    const tokenHash = hashPasswordResetToken(rawToken);
+    db.exec('BEGIN IMMEDIATE');
+    try {
+      db.prepare(`
+        UPDATE password_reset_tokens
+        SET used_at = datetime('now', 'localtime')
+        WHERE user_id = ? AND used_at IS NULL
+      `).run(user.id);
+      db.prepare(`
+        INSERT INTO password_reset_tokens (user_id, token_hash, expires_at)
+        VALUES (?, ?, datetime('now', 'localtime', ?))
+      `).run(user.id, tokenHash, `+${PASSWORD_RESET_EXPIRY_MINUTES} minutes`);
+      db.exec('COMMIT');
+    } catch (error) {
+      db.exec('ROLLBACK');
+      throw error;
+    }
+
+    try {
+      const resetUrl = `${getPublicBaseUrl(req)}/?resetToken=${encodeURIComponent(rawToken)}`;
+      await sendPasswordResetEmail(user.email, user.name, resetUrl, user.role);
+    } catch (error) {
+      db.prepare(`
+        UPDATE password_reset_tokens
+        SET used_at = datetime('now', 'localtime')
+        WHERE token_hash = ?
+      `).run(tokenHash);
+      console.error('[email] Falha ao enviar recuperação de senha:', error.message);
+      throw httpError(503, 'O serviço de e-mail está temporariamente indisponível. Tente novamente mais tarde.');
+    }
+    res.json(genericResponse);
+  } catch (error) {
+    sendError(res, error);
+  }
+});
+
+app.get('/api/auth/reset-password/:token', (req, res) => {
+  const reset = getValidPasswordReset(req.params.token);
+  if (!reset) return res.status(400).json({ message: 'Este link é inválido, já foi utilizado ou expirou.' });
+  res.json({ valid: true, role: reset.role });
+});
+
+app.post('/api/auth/reset-password', (req, res) => {
+  try {
+    const token = String(req.body?.token || '');
+    const password = String(req.body?.password || '');
+    if (password.length < 6) throw httpError(400, 'A nova senha deve ter pelo menos 6 caracteres.');
+    let resetRole = 'tutor';
+
+    db.exec('BEGIN IMMEDIATE');
+    try {
+      const reset = getValidPasswordReset(token);
+      if (!reset) throw httpError(400, 'Este link é inválido, já foi utilizado ou expirou.');
+      resetRole = reset.role;
+      db.prepare(`
+        UPDATE users
+        SET password_hash = ?, updated_at = CURRENT_TIMESTAMP
+        WHERE id = ? AND active = 1
+      `).run(bcrypt.hashSync(password, 12), reset.user_id);
+      db.prepare(`
+        UPDATE password_reset_tokens
+        SET used_at = datetime('now', 'localtime')
+        WHERE user_id = ? AND used_at IS NULL
+      `).run(reset.user_id);
+      db.exec('COMMIT');
+    } catch (error) {
+      db.exec('ROLLBACK');
+      throw error;
+    }
+    res.json({
+      message: `Senha redefinida com sucesso. Você já pode entrar na ${resetRole === 'admin' ? 'Área Administrativa' : 'Área do Tutor'}.`,
+      role: resetRole
+    });
+  } catch (error) {
+    sendError(res, error);
+  }
+});
+
 app.post('/api/auth/register', async (req, res) => {
   try {
     const { user, role = 'tutor', terms } = req.body;
@@ -269,8 +366,45 @@ app.get('/api/me', requireAuth, (req, res) => {
     user: publicUser(user),
     limit: getAppointmentLimit(user.role),
     currentMonthUsed: getCurrentMonthUsage(user.id),
-    appointments: listAppointments({ userId: user.id }).map(addResponsibleEditInfo)
+    appointments: listAppointments({ userId: user.id }).map(addResponsibleEditInfo),
+    notifications: listUnreadNotifications(user.id)
   });
+});
+
+app.patch('/api/me/email', requireAuth, (req, res) => {
+  try {
+    if (!['tutor', 'protetor'].includes(req.user.role)) {
+      throw httpError(403, 'Atualização disponível somente para tutores e protetores.');
+    }
+    const email = normalizeText(req.body?.email).toLowerCase();
+    if (!isValidEmail(email)) throw httpError(400, 'Informe um e-mail válido.');
+    db.prepare(`
+      UPDATE users
+      SET email = ?, updated_at = CURRENT_TIMESTAMP
+      WHERE id = ?
+    `).run(email, req.user.id);
+    res.json({ user: publicUser(getUserById(req.user.id)) });
+  } catch (error) {
+    sendError(res, error);
+  }
+});
+
+app.post('/api/me/notifications/:id/read', requireAuth, (req, res) => {
+  try {
+    const notificationId = Number(req.params.id);
+    if (!Number.isInteger(notificationId) || notificationId <= 0) {
+      throw httpError(400, 'Notificação inválida.');
+    }
+    const result = db.prepare(`
+      UPDATE user_notifications
+      SET read_at = datetime('now', 'localtime')
+      WHERE id = ? AND user_id = ? AND read_at IS NULL
+    `).run(notificationId, req.user.id);
+    if (result.changes !== 1) throw httpError(404, 'Notificação não encontrada.');
+    res.json({ success: true });
+  } catch (error) {
+    sendError(res, error);
+  }
 });
 
 app.put('/api/me/password', requireAuth, (req, res) => {
@@ -686,27 +820,45 @@ app.put('/api/admin/slots/releases/:month', requireAdmin, (req, res) => {
     const slotCount = db.prepare('SELECT COUNT(*) AS total FROM slots WHERE substr(date, 1, 7) = ?').get(month).total;
     if (!slotCount) throw httpError(404, 'Não existem vagas cadastradas para este mês.');
 
-    if (action === 'hidden') {
-      db.prepare('DELETE FROM slot_release_months WHERE month = ?').run(month);
-    } else {
-      let releaseAt;
-      if (action === 'now') {
-        releaseAt = db.prepare("SELECT datetime('now', 'localtime') AS value").get().value;
-      } else if (action === 'scheduled') {
-        releaseAt = normalizeReleaseDateTime(req.body.releaseAt);
-        const isFuture = db.prepare("SELECT datetime(?) > datetime('now', 'localtime') AS valid").get(releaseAt).valid;
-        if (!isFuture) throw httpError(400, 'Escolha uma data e horário futuros para a publicação.');
+    let releaseAt = null;
+    db.exec('BEGIN IMMEDIATE');
+    try {
+      if (action === 'hidden') {
+        db.prepare('DELETE FROM slot_release_months WHERE month = ?').run(month);
       } else {
-        throw httpError(400, 'Ação de publicação inválida.');
+        if (action === 'now') {
+          releaseAt = db.prepare("SELECT datetime('now', 'localtime') AS value").get().value;
+        } else if (action === 'scheduled') {
+          releaseAt = normalizeReleaseDateTime(req.body.releaseAt);
+          const isFuture = db.prepare("SELECT datetime(?) > datetime('now', 'localtime') AS valid").get(releaseAt).valid;
+          if (!isFuture) throw httpError(400, 'Escolha uma data e horário futuros para a publicação.');
+        } else {
+          throw httpError(400, 'Ação de publicação inválida.');
+        }
+
+        db.prepare(`
+          INSERT INTO slot_release_months (month, release_at)
+          VALUES (?, ?)
+          ON CONFLICT(month) DO UPDATE SET
+            release_at = excluded.release_at,
+            updated_at = CURRENT_TIMESTAMP
+        `).run(month, releaseAt);
       }
 
-      db.prepare(`
-        INSERT INTO slot_release_months (month, release_at)
-        VALUES (?, ?)
-        ON CONFLICT(month) DO UPDATE SET
-          release_at = excluded.release_at,
-          updated_at = CURRENT_TIMESTAMP
-      `).run(month, releaseAt);
+      auditSlotAction(
+        action === 'now' ? 'month_published' : action === 'scheduled' ? 'month_scheduled' : 'month_hidden',
+        req.user,
+        null,
+        {
+          releaseMonth: month,
+          releaseAt,
+          details: `${slotCount} registro(s) de vagas no mês no momento da ação.`
+        }
+      );
+      db.exec('COMMIT');
+    } catch (err) {
+      db.exec('ROLLBACK');
+      throw err;
     }
 
     res.json({ release: getSlotMonthRelease(month) });
@@ -730,13 +882,22 @@ app.get('/api/admin/slots', requireAdmin, (_req, res) => {
   res.json({ slots: slots.map((slot) => ({ ...slot, label: animalTypeLabel(slot.species, slot.sex) })) });
 });
 
-app.post('/api/admin/slots/auto-renew', requireAdmin, (_req, res) => {
-  try {
-    const result = autoRenewSlots();
-    res.json(result);
-  } catch (error) {
-    sendError(res, error);
-  }
+app.get('/api/admin/slot-logs', requireAdmin, (_req, res) => {
+  const logs = db.prepare(`
+    SELECT *
+    FROM slot_audit_logs
+    ORDER BY datetime(event_at) DESC, id DESC
+  `).all();
+  res.json({ logs });
+});
+
+app.get('/api/admin/audit-logs', requireAdmin, (_req, res) => {
+  const logs = db.prepare(`
+    SELECT *
+    FROM admin_audit_logs
+    ORDER BY datetime(event_at) DESC, id DESC
+  `).all();
+  res.json({ logs });
 });
 
 app.post('/api/admin/slots/renew', requireAdmin, (req, res) => {
@@ -754,22 +915,38 @@ app.post('/api/admin/slots/renew', requireAdmin, (req, res) => {
           if (!Number.isInteger(sourceId) || sourceId <= 0) throw httpError(400, 'Seleção de vagas inválida.');
           if (!getSlot(sourceId)) throw httpError(404, `Vaga ${sourceId} não encontrada.`);
           const slot = parseSlot(renewal);
+          assertSlotDateIsCurrentOrFuture(slot.date);
           const result = db.prepare(`
-            INSERT INTO slots (date, time, species, sex, total_quantity, occupied_quantity, clinic_id, clinic, active)
-            VALUES (?, ?, ?, ?, ?, 0, ?, ?, 1)
-          `).run(slot.date, slot.time, slot.species, slot.sex, slot.total_quantity, slot.clinic_id, slot.clinic);
-          created.push(getSlot(result.lastInsertRowid));
+            INSERT INTO slots (
+              date, time, species, sex, total_quantity, occupied_quantity, clinic_id, clinic, active,
+              created_by_user_id, creation_source, renewed_from_slot_id
+            )
+            VALUES (?, ?, ?, ?, ?, 0, ?, ?, 1, ?, 'renewed', ?)
+          `).run(
+            slot.date, slot.time, slot.species, slot.sex, slot.total_quantity, slot.clinic_id, slot.clinic,
+            req.user.id, sourceId
+          );
+          const createdSlot = getSlot(result.lastInsertRowid);
+          created.push(createdSlot);
         }
       } else {
         for (const id of ids) {
           const slot = getSlot(id);
           if (!slot) throw httpError(404, `Vaga ${id} não encontrada.`);
           const newDate = db.prepare("SELECT date(?, '+1 month') AS d").get(slot.date).d;
+          assertSlotDateIsCurrentOrFuture(newDate);
           const result = db.prepare(`
-            INSERT INTO slots (date, time, species, sex, total_quantity, occupied_quantity, clinic_id, clinic, active)
-            VALUES (?, ?, ?, ?, ?, 0, ?, ?, 1)
-          `).run(newDate, slot.time, slot.species, slot.sex, slot.total_quantity, slot.clinic_id, slot.clinic);
-          created.push(getSlot(result.lastInsertRowid));
+            INSERT INTO slots (
+              date, time, species, sex, total_quantity, occupied_quantity, clinic_id, clinic, active,
+              created_by_user_id, creation_source, renewed_from_slot_id
+            )
+            VALUES (?, ?, ?, ?, ?, 0, ?, ?, 1, ?, 'renewed', ?)
+          `).run(
+            newDate, slot.time, slot.species, slot.sex, slot.total_quantity, slot.clinic_id, slot.clinic,
+            req.user.id, slot.id
+          );
+          const createdSlot = getSlot(result.lastInsertRowid);
+          created.push(createdSlot);
         }
       }
       db.exec('COMMIT');
@@ -789,11 +966,26 @@ app.post('/api/admin/slots/renew', requireAdmin, (req, res) => {
 app.post('/api/admin/slots', requireAdmin, (req, res) => {
   try {
     const slot = parseSlot(req.body);
-    const result = db.prepare(`
-      INSERT INTO slots (date, time, species, sex, total_quantity, occupied_quantity, clinic_id, clinic, active)
-      VALUES (?, ?, ?, ?, ?, 0, ?, ?, 1)
-    `).run(slot.date, slot.time, slot.species, slot.sex, slot.total_quantity, slot.clinic_id, slot.clinic);
-    res.status(201).json({ slot: getSlot(result.lastInsertRowid) });
+    assertSlotDateIsCurrentOrFuture(slot.date);
+    db.exec('BEGIN IMMEDIATE');
+    try {
+      const result = db.prepare(`
+        INSERT INTO slots (
+          date, time, species, sex, total_quantity, occupied_quantity, clinic_id, clinic, active,
+          created_by_user_id, creation_source
+        )
+        VALUES (?, ?, ?, ?, ?, 0, ?, ?, 1, ?, 'manual')
+      `).run(
+        slot.date, slot.time, slot.species, slot.sex, slot.total_quantity, slot.clinic_id, slot.clinic,
+        req.user.id
+      );
+      const createdSlot = getSlot(result.lastInsertRowid);
+      db.exec('COMMIT');
+      res.status(201).json({ slot: createdSlot });
+    } catch (err) {
+      db.exec('ROLLBACK');
+      throw err;
+    }
   } catch (error) {
     sendError(res, error);
   }
@@ -810,12 +1002,25 @@ app.put('/api/admin/slots/:id', requireAdmin, (req, res) => {
     if (slot.total_quantity < current.occupied_quantity) {
       throw httpError(400, 'A quantidade total não pode ser menor que as vagas já ocupadas.');
     }
-    db.prepare(`
-      UPDATE slots
-      SET date = ?, time = ?, species = ?, sex = ?, total_quantity = ?, clinic_id = ?, clinic = ?, active = ?, updated_at = CURRENT_TIMESTAMP
-      WHERE id = ?
-    `).run(slot.date, slot.time, slot.species, slot.sex, slot.total_quantity, slot.clinic_id, slot.clinic, req.body.active ? 1 : 0, req.params.id);
-    res.json({ slot: getSlot(req.params.id) });
+    db.exec('BEGIN IMMEDIATE');
+    try {
+      const active = req.body.active ? 1 : 0;
+      db.prepare(`
+        UPDATE slots
+        SET date = ?, time = ?, species = ?, sex = ?, total_quantity = ?, clinic_id = ?, clinic = ?, active = ?, updated_at = CURRENT_TIMESTAMP
+        WHERE id = ?
+      `).run(slot.date, slot.time, slot.species, slot.sex, slot.total_quantity, slot.clinic_id, slot.clinic, active, req.params.id);
+      const updatedSlot = getSlot(req.params.id);
+      const action = current.active && !active ? 'deactivated' : 'updated';
+      auditSlotAction(action, req.user, updatedSlot, {
+        details: action === 'updated' ? `Dados anteriores: ${slotAuditSummary(current)}` : null
+      });
+      db.exec('COMMIT');
+      res.json({ slot: updatedSlot });
+    } catch (err) {
+      db.exec('ROLLBACK');
+      throw err;
+    }
   } catch (error) {
     sendError(res, error);
   }
@@ -833,6 +1038,7 @@ app.delete('/api/admin/slots/:id', requireAdmin, (req, res) => {
       db.exec('BEGIN IMMEDIATE');
       try {
         db.prepare(`DELETE FROM appointments WHERE slot_id = ? AND status = 'cancelado'`).run(req.params.id);
+        auditSlotAction('deleted', req.user, current);
         db.prepare('DELETE FROM slots WHERE id = ?').run(req.params.id);
         db.exec('COMMIT');
       } catch (err) {
@@ -841,8 +1047,17 @@ app.delete('/api/admin/slots/:id', requireAdmin, (req, res) => {
       }
       return res.json({ deleted: true });
     }
-    db.prepare('UPDATE slots SET active = 0, updated_at = CURRENT_TIMESTAMP WHERE id = ?').run(req.params.id);
-    res.json({ slot: getSlot(req.params.id) });
+    db.exec('BEGIN IMMEDIATE');
+    try {
+      db.prepare('UPDATE slots SET active = 0, updated_at = CURRENT_TIMESTAMP WHERE id = ?').run(req.params.id);
+      const deactivatedSlot = getSlot(req.params.id);
+      auditSlotAction('deactivated', req.user, deactivatedSlot);
+      db.exec('COMMIT');
+      res.json({ slot: deactivatedSlot });
+    } catch (err) {
+      db.exec('ROLLBACK');
+      throw err;
+    }
   } catch (error) {
     sendError(res, error);
   }
@@ -870,9 +1085,18 @@ app.patch('/api/admin/appointments/:id/status', requireAppointmentManager, (req,
   }
 });
 
+app.put('/api/admin/appointments/:id/reschedule', requireAdmin, (req, res) => {
+  try {
+    const appointment = rescheduleAppointment(req.params.id, req.body?.slotId, req.user);
+    res.json({ appointment });
+  } catch (error) {
+    sendError(res, error);
+  }
+});
+
 app.get('/api/admin/users', requireAdmin, (_req, res) => {
   const users = db.prepare(`
-    SELECT u.id, u.name, u.cpf, u.phone, u.address, u.neighborhood, u.role, u.clinic_id, c.name AS clinic_name,
+    SELECT u.id, u.name, u.cpf, u.phone, u.email, u.address, u.neighborhood, u.role, u.clinic_id, c.name AS clinic_name,
       u.city_confirmed, u.adult_confirmed, u.pre_registered, u.active, u.created_at
     FROM users u
     LEFT JOIN clinics c ON c.id = u.clinic_id
@@ -883,7 +1107,23 @@ app.get('/api/admin/users', requireAdmin, (_req, res) => {
 
 app.post('/api/admin/users', requireAdmin, (req, res) => {
   try {
-    const user = upsertAdminUser(req.body);
+    db.exec('BEGIN IMMEDIATE');
+    let user;
+    try {
+      user = upsertAdminUser(req.body);
+      if (user.email) {
+        auditAdminAction('email_changed', req.user, {
+          targetUser: user,
+          oldEmail: '',
+          newEmail: user.email,
+          details: 'E-mail informado pelo administrador durante o cadastro do usuário.'
+        });
+      }
+      db.exec('COMMIT');
+    } catch (error) {
+      db.exec('ROLLBACK');
+      throw error;
+    }
     res.status(201).json({ user: publicUser(user) });
   } catch (error) {
     sendError(res, error);
@@ -892,7 +1132,25 @@ app.post('/api/admin/users', requireAdmin, (req, res) => {
 
 app.put('/api/admin/users/:id', requireAdmin, (req, res) => {
   try {
-    const user = upsertAdminUser({ ...req.body, id: Number(req.params.id) });
+    const previous = getUserById(req.params.id);
+    if (!previous) throw httpError(404, 'Usuário não encontrado.');
+    db.exec('BEGIN IMMEDIATE');
+    let user;
+    try {
+      user = upsertAdminUser({ ...req.body, id: Number(req.params.id) });
+      if (normalizeText(previous.email || '').toLowerCase() !== normalizeText(user.email || '').toLowerCase()) {
+        auditAdminAction('email_changed', req.user, {
+          targetUser: user,
+          oldEmail: previous.email || '',
+          newEmail: user.email || '',
+          details: previous.email ? 'E-mail corrigido pelo administrador.' : 'E-mail vinculado pelo administrador.'
+        });
+      }
+      db.exec('COMMIT');
+    } catch (error) {
+      db.exec('ROLLBACK');
+      throw error;
+    }
     res.json({ user: publicUser(user) });
   } catch (error) {
     sendError(res, error);
@@ -1017,9 +1275,6 @@ app.listen(PORT, LISTEN_HOST, () => {
 async function bootstrap() {
   initSchema();
   await seedDatabase();
-  autoRenewSlots();
-  // Check daily — idempotent, skips when day < 25 or slots already exist
-  setInterval(() => autoRenewSlots(), 24 * 60 * 60 * 1000);
 }
 
 function formatDateBR(dateStr) {
@@ -1033,6 +1288,92 @@ function speciesLabel(species, sex) {
   const s = species === 'cao' ? 'Cão' : 'Gato';
   const g = sex === 'femea' ? 'fêmea' : 'macho';
   return `${s} ${g}`;
+}
+
+function isValidEmail(value = '') {
+  return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(String(value).trim());
+}
+
+function hashPasswordResetToken(token = '') {
+  return crypto.createHash('sha256').update(String(token)).digest('hex');
+}
+
+function getValidPasswordReset(rawToken = '') {
+  const token = String(rawToken);
+  if (!/^[a-f0-9]{64}$/i.test(token)) return null;
+  return db.prepare(`
+    SELECT prt.id, prt.user_id, u.role
+    FROM password_reset_tokens prt
+    JOIN users u ON u.id = prt.user_id
+    WHERE prt.token_hash = ?
+      AND prt.used_at IS NULL
+      AND datetime(prt.expires_at) > datetime('now', 'localtime')
+      AND u.active = 1
+      AND u.role IN ('admin', 'tutor', 'protetor')
+  `).get(hashPasswordResetToken(token));
+}
+
+function getPublicBaseUrl(req) {
+  const configured = String(process.env.APP_BASE_URL || '').trim().replace(/\/+$/, '');
+  if (configured) {
+    const url = new URL(configured);
+    if (!['http:', 'https:'].includes(url.protocol)) throw new Error('APP_BASE_URL deve usar HTTP ou HTTPS.');
+    return url.origin + url.pathname.replace(/\/+$/, '');
+  }
+  if (process.env.NODE_ENV === 'production') {
+    throw new Error('APP_BASE_URL é obrigatório para enviar links de recuperação em produção.');
+  }
+  return `${req.protocol}://${req.get('host')}`;
+}
+
+function escapeEmailHtml(value = '') {
+  return String(value)
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#039;');
+}
+
+async function sendPasswordResetEmail(toEmail, userName, resetUrl, role = 'tutor') {
+  if (!smtpTransporter) throw new Error('Servidor SMTP não configurado.');
+  const fromAddress = process.env.SMTP_FROM || process.env.SMTP_USER;
+  if (!fromAddress) throw new Error('Remetente SMTP não configurado.');
+  const safeName = escapeEmailHtml(userName);
+  const safeUrl = escapeEmailHtml(resetUrl);
+  const accessArea = role === 'admin' ? 'Área Administrativa' : 'Área do Tutor';
+  const subject = `Redefinição de senha — ${accessArea}`;
+  const html = `
+    <div style="margin:0;padding:28px 12px;background:#f4f0e7;font-family:'DM Sans',Arial,sans-serif;color:#173c38">
+      <div style="max-width:600px;margin:0 auto">
+        <div style="padding:26px 30px;background:#08776b;border-radius:18px 18px 0 0">
+          <p style="margin:0;color:#ccebe6;font-size:12px;font-weight:700;letter-spacing:.1em;text-transform:uppercase">Programa Municipal · Nova Iguaçu</p>
+          <h1 style="margin:8px 0 0;color:#fff;font-family:Georgia,serif;font-size:26px;line-height:1.2">Castração Animal</h1>
+        </div>
+        <div style="padding:32px 30px;background:#fff;border:1px solid #d9e5df;border-top:0;border-radius:0 0 18px 18px">
+          <p style="margin:0 0 16px;font-size:16px">Olá, <strong>${safeName}</strong>!</p>
+          <p style="margin:0 0 22px;color:#55716d;line-height:1.6">Recebemos uma solicitação para criar uma nova senha de acesso à sua ${accessArea}.</p>
+          <div style="text-align:center;margin:28px 0">
+            <a href="${safeUrl}" style="display:inline-block;padding:14px 24px;color:#fff;background:#08776b;border-radius:10px;font-size:15px;font-weight:700;text-decoration:none">Criar nova senha</a>
+          </div>
+          <div style="padding:15px 17px;background:#fff8df;border:1px solid #ead48b;border-radius:10px;color:#725200;font-size:14px;line-height:1.5">
+            <strong>Este link é válido por ${PASSWORD_RESET_EXPIRY_MINUTES} minutos</strong> e poderá ser usado somente uma vez.
+          </div>
+          <p style="margin:24px 0 8px;color:#55716d;font-size:13px;line-height:1.5">Se o botão não abrir, copie e cole este endereço no navegador:</p>
+          <p style="margin:0;padding:12px;background:#edf6f3;border-radius:8px;color:#08776b;font-size:12px;line-height:1.5;word-break:break-all">${safeUrl}</p>
+          <p style="margin:24px 0 0;color:#718783;font-size:13px;line-height:1.5">Se você não solicitou esta alteração, ignore este e-mail. Sua senha atual continuará funcionando.</p>
+        </div>
+        <p style="margin:16px 0 0;text-align:center;color:#718783;font-size:12px">Secretaria Municipal de Defesa e Proteção dos Animais · Nova Iguaçu</p>
+      </div>
+    </div>
+  `;
+  await smtpTransporter.sendMail({
+    from: fromAddress,
+    to: toEmail,
+    subject,
+    text: `Olá, ${userName}!\n\nUse o link abaixo para criar uma nova senha da ${accessArea}:\n${resetUrl}\n\nO link é válido por ${PASSWORD_RESET_EXPIRY_MINUTES} minutos e só pode ser usado uma vez.\n\nSe você não solicitou a alteração, ignore este e-mail.`,
+    html
+  });
 }
 
 async function sendConfirmationEmail(toEmail, userName, appointment) {
@@ -1123,7 +1464,7 @@ function parseUser(input = {}, role) {
     address: normalizeText(input.address),
     address_number: addressNumberMissing ? 'S/N' : normalizeText(input.addressNumber || input.address_number),
     neighborhood: normalizeText(input.neighborhood),
-    email: normalizeText(input.email || '')
+    email: normalizeText(input.email || '').toLowerCase()
   };
   if (!data.name) throw httpError(400, 'Informe o nome completo.');
   if (!isValidCpf(data.cpf)) throw httpError(400, 'CPF inválido. Verifique os dígitos informados.');
@@ -1132,7 +1473,7 @@ function parseUser(input = {}, role) {
   if (!data.address_number) throw httpError(400, 'Informe o número da residência ou marque a opção sem número.');
   if (!data.neighborhood && role !== 'protetor') throw httpError(400, 'Informe o bairro.');
   if (!data.phone) throw httpError(400, 'Informe o telefone.');
-  if (data.email && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(data.email)) throw httpError(400, 'E-mail inválido.');
+  if (!isValidEmail(data.email)) throw httpError(400, 'Informe um e-mail válido para criar seu acesso.');
   if (!input.cityAdultConfirmed) throw httpError(400, 'Confirme que reside em Nova Iguaçu e é maior de 18 anos.');
   if (!input.password || String(input.password).length < 6) throw httpError(400, 'A senha de acesso deve ter pelo menos 6 caracteres para ser criada.');
   return data;
@@ -1241,13 +1582,18 @@ function parseSlot(input = {}) {
     clinic: clinic?.name || ''
   };
   if (!/^\d{4}-\d{2}-\d{2}$/.test(slot.date)) throw httpError(400, 'Informe uma data válida.');
-  if (!/^\d{2}:\d{2}$/.test(slot.time)) throw httpError(400, 'Informe um horário válido.');
+  if (!/^([01]\d|2[0-3]):[0-5]\d$/.test(slot.time)) throw httpError(400, 'Informe um horário válido no formato 24 horas HH:MM.');
   if (!['cao', 'gato'].includes(slot.species)) throw httpError(400, 'Selecione a espécie da vaga.');
   if (!['macho', 'femea'].includes(slot.sex)) throw httpError(400, 'Selecione o sexo da vaga.');
   if (!Number.isInteger(slot.total_quantity) || slot.total_quantity <= 0) throw httpError(400, 'A quantidade deve ser maior que zero.');
   if (!clinic) throw httpError(400, 'Selecione uma clínica cadastrada.');
   if (!clinic.active) throw httpError(400, 'Selecione uma clínica ativa.');
   return slot;
+}
+
+function assertSlotDateIsCurrentOrFuture(date) {
+  const valid = db.prepare("SELECT date(?) >= date('now', 'localtime') AS valid").get(date).valid;
+  if (!valid) throw httpError(400, 'A data da vaga não pode estar no passado.');
 }
 
 function parseClinic(input = {}) {
@@ -1320,6 +1666,9 @@ async function parseSubstituteResponsible(input = {}) {
 async function createAutomaticAppointment(user, animalInput, terms, options = {}) {
   if (!['tutor', 'protetor', 'admin'].includes(user.role)) {
     throw httpError(403, 'Somente tutores, protetores cadastrados e administradores podem solicitar agendamento.');
+  }
+  if (['tutor', 'protetor'].includes(user.role) && !isValidEmail(user.email)) {
+    throw httpError(409, 'Atualize seu e-mail na Área do Tutor antes de realizar um agendamento.');
   }
   const animal = parseAnimal(animalInput);
   const responsible = await parseSubstituteResponsible(options.responsible);
@@ -1504,6 +1853,7 @@ function listAppointments({ userId, clinicId, appointmentId } = {}) {
       an.breed,
       an.approximate_age,
       s.id AS slot_id,
+      s.clinic_id,
       s.date,
       s.time,
       COALESCE(c.name, s.clinic) AS clinic,
@@ -1524,6 +1874,144 @@ function getAppointmentDetails(id) {
   const [appointment] = listAppointments({ appointmentId: id });
   if (!appointment) throw httpError(404, 'Agendamento não encontrado.');
   return appointment;
+}
+
+function listUnreadNotifications(userId) {
+  return db.prepare(`
+    SELECT
+      id, type, appointment_id, title, message,
+      old_date, old_time, old_clinic,
+      new_date, new_time, new_clinic,
+      created_at
+    FROM user_notifications
+    WHERE user_id = ? AND read_at IS NULL
+    ORDER BY created_at DESC, id DESC
+  `).all(userId);
+}
+
+function rescheduleAppointment(appointmentIdValue, targetSlotIdValue, actor) {
+  const appointmentId = Number(appointmentIdValue);
+  const targetSlotId = Number(targetSlotIdValue);
+  if (!Number.isInteger(appointmentId) || appointmentId <= 0) {
+    throw httpError(400, 'Agendamento inválido.');
+  }
+  if (!Number.isInteger(targetSlotId) || targetSlotId <= 0) {
+    throw httpError(400, 'Selecione a nova clínica, data e horário.');
+  }
+
+  db.exec('BEGIN IMMEDIATE');
+  try {
+    const appointment = db.prepare(`
+      SELECT
+        a.id, a.user_id, a.slot_id, a.status, a.protocol,
+        target_user.name AS target_user_name,
+        target_user.cpf AS target_user_cpf,
+        an.species, an.sex,
+        old_slot.date AS old_date,
+        old_slot.time AS old_time,
+        COALESCE(old_clinic.name, old_slot.clinic) AS old_clinic
+      FROM appointments a
+      JOIN users target_user ON target_user.id = a.user_id
+      JOIN animals an ON an.id = a.animal_id
+      JOIN slots old_slot ON old_slot.id = a.slot_id
+      LEFT JOIN clinics old_clinic ON old_clinic.id = old_slot.clinic_id
+      WHERE a.id = ?
+    `).get(appointmentId);
+    if (!appointment) throw httpError(404, 'Agendamento não encontrado.');
+    if (appointment.status !== 'agendado') {
+      throw httpError(409, 'Somente agendamentos com status Agendado podem ser remarcados.');
+    }
+    if (appointment.slot_id === targetSlotId) {
+      throw httpError(400, 'Selecione uma vaga diferente da atual.');
+    }
+
+    const target = db.prepare(`
+      SELECT
+        s.id, s.date, s.time, s.species, s.sex,
+        s.total_quantity, s.occupied_quantity, s.active,
+        c.id AS clinic_id, c.name AS clinic, c.active AS clinic_active
+      FROM slots s
+      JOIN clinics c ON c.id = s.clinic_id
+      WHERE s.id = ?
+    `).get(targetSlotId);
+    if (!target) throw httpError(404, 'Nova vaga não encontrada.');
+    if (!target.active || !target.clinic_active) {
+      throw httpError(409, 'A nova vaga ou clínica está inativa.');
+    }
+    if (target.species !== appointment.species || target.sex !== appointment.sex) {
+      throw httpError(409, 'A nova vaga não é compatível com a espécie e o sexo do animal.');
+    }
+    const future = db.prepare(`
+      SELECT datetime(? || ' ' || ?) > datetime('now', 'localtime') AS valid
+    `).get(target.date, target.time);
+    if (!future?.valid) throw httpError(409, 'Selecione uma data e horário futuros.');
+
+    const occupied = db.prepare(`
+      UPDATE slots
+      SET occupied_quantity = occupied_quantity + 1, updated_at = CURRENT_TIMESTAMP
+      WHERE id = ? AND active = 1 AND occupied_quantity < total_quantity
+    `).run(target.id);
+    if (occupied.changes !== 1) throw httpError(409, 'A nova vaga não possui mais disponibilidade.');
+
+    const released = db.prepare(`
+      UPDATE slots
+      SET occupied_quantity = occupied_quantity - 1, updated_at = CURRENT_TIMESTAMP
+      WHERE id = ? AND occupied_quantity > 0
+    `).run(appointment.slot_id);
+    if (released.changes !== 1) {
+      throw httpError(409, 'A ocupação da vaga atual está inconsistente. Nenhuma alteração foi realizada.');
+    }
+
+    db.prepare(`
+      UPDATE appointments
+      SET slot_id = ?, updated_at = CURRENT_TIMESTAMP
+      WHERE id = ?
+    `).run(target.id, appointment.id);
+
+    db.prepare(`
+      INSERT INTO user_notifications (
+        user_id, type, appointment_id, title, message,
+        old_date, old_time, old_clinic,
+        new_date, new_time, new_clinic
+      ) VALUES (?, 'appointment_rescheduled', ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `).run(
+      appointment.user_id,
+      appointment.id,
+      'Seu agendamento foi alterado',
+      `O agendamento ${appointment.protocol} foi remarcado pela administração.`,
+      appointment.old_date,
+      appointment.old_time,
+      appointment.old_clinic,
+      target.date,
+      target.time,
+      target.clinic
+    );
+
+    auditAdminAction('appointment_rescheduled', actor, {
+      targetUser: {
+        id: appointment.user_id,
+        name: appointment.target_user_name,
+        cpf: appointment.target_user_cpf
+      },
+      appointmentId: appointment.id,
+      protocol: appointment.protocol,
+      oldSlotId: appointment.slot_id,
+      oldDate: appointment.old_date,
+      oldTime: appointment.old_time,
+      oldClinic: appointment.old_clinic,
+      newSlotId: target.id,
+      newDate: target.date,
+      newTime: target.time,
+      newClinic: target.clinic,
+      details: 'Clínica, data ou horário alterado pelo administrador.'
+    });
+
+    db.exec('COMMIT');
+    return getAppointmentDetails(appointment.id);
+  } catch (error) {
+    db.exec('ROLLBACK');
+    throw error;
+  }
 }
 
 function canUpdateAppointmentResponsible(appointment, minHours = RESPONSIBLE_UPDATE_MIN_HOURS) {
@@ -1623,6 +2111,7 @@ function upsertAdminUser(input = {}) {
     name: normalizeText(input.name),
     cpf: normalizeCpf(input.cpf),
     phone: normalizePhone(input.phone),
+    email: normalizeText(input.email || '').toLowerCase(),
     address: normalizeText(input.address),
     neighborhood: normalizeText(input.neighborhood),
     clinic_id: role === 'clinica' ? clinicId : null,
@@ -1631,6 +2120,7 @@ function upsertAdminUser(input = {}) {
   };
   if (!data.name) throw httpError(400, 'Informe o nome.');
   if (!isValidCpf(data.cpf)) throw httpError(400, 'CPF inválido. Verifique os dígitos informados.');
+  if (data.email && !isValidEmail(data.email)) throw httpError(400, 'Informe um e-mail válido.');
   if (role === 'clinica' && !clinic) throw httpError(400, 'Selecione uma clínica cadastrada para este usuário.');
   const passwordHash = input.password ? bcrypt.hashSync(String(input.password), 12) : null;
   if (!id && role === 'clinica' && !passwordHash) throw httpError(400, 'Informe uma senha para o usuário da clínica.');
@@ -1640,18 +2130,18 @@ function upsertAdminUser(input = {}) {
     if (!current) throw httpError(404, 'Usuário não encontrado.');
     db.prepare(`
       UPDATE users
-      SET name = ?, cpf = ?, phone = ?, address = ?, neighborhood = ?, role = ?, clinic_id = ?, pre_registered = ?,
+      SET name = ?, cpf = ?, phone = ?, email = ?, address = ?, neighborhood = ?, role = ?, clinic_id = ?, pre_registered = ?,
         active = ?, password_hash = COALESCE(?, password_hash), updated_at = CURRENT_TIMESTAMP
       WHERE id = ?
-    `).run(data.name, data.cpf, data.phone, data.address, data.neighborhood, role, data.clinic_id, data.pre_registered, data.active, passwordHash, id);
+    `).run(data.name, data.cpf, data.phone, data.email, data.address, data.neighborhood, role, data.clinic_id, data.pre_registered, data.active, passwordHash, id);
     return getUserById(id);
   }
 
   const result = db.prepare(`
     INSERT INTO users
-      (name, cpf, password_hash, phone, address, neighborhood, role, clinic_id, city_confirmed, adult_confirmed, pre_registered, active)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, 1, 1, ?, ?)
-  `).run(data.name, data.cpf, passwordHash, data.phone, data.address, data.neighborhood, role, data.clinic_id, data.pre_registered, data.active);
+      (name, cpf, password_hash, phone, email, address, neighborhood, role, clinic_id, city_confirmed, adult_confirmed, pre_registered, active)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 1, 1, ?, ?)
+  `).run(data.name, data.cpf, passwordHash, data.phone, data.email, data.address, data.neighborhood, role, data.clinic_id, data.pre_registered, data.active);
   return getUserById(result.lastInsertRowid);
 }
 
@@ -1668,6 +2158,80 @@ function getSlot(id) {
     WHERE s.id = ?
   `).get(id);
   return slot ? { ...slot, label: animalTypeLabel(slot.species, slot.sex) } : null;
+}
+
+function auditAdminAction(action, actor, data = {}) {
+  db.prepare(`
+    INSERT INTO admin_audit_logs (
+      action, actor_user_id, actor_name, actor_cpf,
+      target_user_id, target_user_name, target_user_cpf,
+      appointment_id, protocol,
+      old_email, new_email,
+      old_slot_id, old_date, old_time, old_clinic,
+      new_slot_id, new_date, new_time, new_clinic,
+      details
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+  `).run(
+    action,
+    actor?.id ?? null,
+    actor?.name || 'Administrador não identificado',
+    actor?.cpf || null,
+    data.targetUser?.id ?? null,
+    data.targetUser?.name || null,
+    data.targetUser?.cpf || null,
+    data.appointmentId ?? null,
+    data.protocol || null,
+    data.oldEmail ?? null,
+    data.newEmail ?? null,
+    data.oldSlotId ?? null,
+    data.oldDate || null,
+    data.oldTime || null,
+    data.oldClinic || null,
+    data.newSlotId ?? null,
+    data.newDate || null,
+    data.newTime || null,
+    data.newClinic || null,
+    data.details || null
+  );
+}
+
+function auditSlotAction(action, actor, slot, options = {}) {
+  db.prepare(`
+    INSERT INTO slot_audit_logs (
+      slot_id, action, actor_user_id, actor_name, actor_cpf,
+      slot_date, slot_time, species, sex, total_quantity, occupied_quantity,
+      clinic_id, clinic_name, slot_active, release_month, release_at, details
+    )
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+  `).run(
+    slot?.id ?? null,
+    action,
+    actor?.id ?? null,
+    actor?.name || 'Sistema automático',
+    actor?.cpf || null,
+    slot?.date || null,
+    slot?.time || null,
+    slot?.species || null,
+    slot?.sex || null,
+    slot?.total_quantity ?? null,
+    slot?.occupied_quantity ?? null,
+    slot?.clinic_id ?? null,
+    slot?.clinic || null,
+    slot?.active ?? null,
+    options.releaseMonth || null,
+    options.releaseAt || null,
+    options.details || null
+  );
+}
+
+function slotAuditSummary(slot) {
+  return [
+    `${slot.date} ${slot.time}`,
+    animalTypeLabel(slot.species, slot.sex),
+    slot.clinic,
+    `${slot.total_quantity} vaga(s)`,
+    slot.active ? 'ativa' : 'inativa'
+  ].join(' · ');
 }
 
 function getClinic(id) {

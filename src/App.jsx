@@ -2,6 +2,7 @@
 import {
   AlertCircle,
   BarChart2,
+  Bell,
   Building2,
   Calendar,
   CalendarPlus,
@@ -11,10 +12,12 @@ import {
   Edit3,
   Eye,
   FileCheck,
+  History,
   Home,
   KeyRound,
   LogIn,
   LogOut,
+  Mail,
   MessageCircle,
   PawPrint,
   Save,
@@ -125,7 +128,8 @@ async function request(path, options = {}, token) {
 }
 
 export default function App() {
-  const [view, setView] = useState('home');
+  const resetToken = new URLSearchParams(window.location.search).get('resetToken') || '';
+  const [view, setView] = useState(() => resetToken ? 'reset-password' : 'home');
   const [auth, setAuth] = useState(getStoredAuth);
   const [notice, setNotice] = useState('');
 
@@ -197,15 +201,23 @@ export default function App() {
 
         {view === 'usuario' ? (
           auth?.user?.role === 'protetor' || auth?.user?.role === 'tutor' ? (
-            <UserDashboard auth={auth} setView={setView} />
+            <UserDashboard auth={auth} setView={setView} onUserUpdated={(user) => setAuthState(auth.token, user)} />
           ) : (
             <LoginView title="Área do Tutor" expectedRole="usuario" destinationView="usuario" setAuth={setAuthState} setView={setView} />
           )
         ) : null}
 
+        {view === 'forgot-password' || view === 'forgot-password-admin' ? (
+          <ForgotPasswordView setView={setView} adminRecovery={view === 'forgot-password-admin'} />
+        ) : null}
+
+        {view === 'reset-password' ? (
+          <ResetPasswordView token={resetToken} setView={setView} />
+        ) : null}
+
         {view === 'protetor' ? (
           auth?.user?.role === 'protetor' ? (
-            <UserDashboard auth={auth} setView={setView} />
+            <UserDashboard auth={auth} setView={setView} onUserUpdated={(user) => setAuthState(auth.token, user)} />
           ) : (
             <LoginView title={title} expectedRole="protetor" setAuth={setAuthState} setView={setView} />
           )
@@ -369,6 +381,7 @@ function Wizard({ auth, onDone }) {
     addressNumberMissing: auth.user.address_number === 'S/N',
     neighborhood: auth.user.neighborhood || '',
     phone: auth.user.phone || '',
+    email: auth.user.email || '',
     password: '',
     cityAdultConfirmed: true
   } : emptyUser);
@@ -536,11 +549,12 @@ function Wizard({ auth, onDone }) {
 
   function validateStep(targetStep = step) {
     if (targetStep === 1 && isRegistrationFlow) {
-      if (!user.name || !user.cep || !user.address || (!user.addressNumber && !user.addressNumberMissing) || !user.neighborhood || !user.phone) return 'Preencha todos os campos obrigatórios da etapa do tutor.';
+      if (!user.name || !user.cep || !user.address || (!user.addressNumber && !user.addressNumberMissing) || !user.neighborhood || !user.phone || !user.email) return 'Preencha todos os campos obrigatórios da etapa do tutor.';
       if (cpfError) return cpfError;
       if (cepDigits.length !== 8) return 'Informe um CEP válido com 8 dígitos.';
       if (cepLookup.loading) return 'Aguarde a consulta do CEP para continuar.';
       if (cepLookup.error) return cepLookup.error;
+      if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(user.email)) return 'Informe um e-mail válido.';
       if (user.password.length < PASSWORD_MIN_LENGTH) return `A senha de acesso deve ter pelo menos ${PASSWORD_MIN_LENGTH} caracteres para ser criada.`;
       if (!user.cityAdultConfirmed) return 'Confirme que reside em Nova Iguaçu e é maior de 18 anos.';
     }
@@ -700,7 +714,7 @@ function Wizard({ auth, onDone }) {
                       </label>
                       <TextField label="Bairro" value={user.neighborhood} onChange={(value) => updateUser('neighborhood', value)} required />
                       <TextField label="Telefone" value={user.phone} onChange={(value) => updateUser('phone', value)} required />
-                      <TextField label="E-mail" value={user.email} onChange={(value) => updateUser('email', value)} type="email" hint="Use um e-mail de contato, se tiver" />
+                      <TextField label="E-mail" value={user.email} onChange={(value) => updateUser('email', value)} type="email" hint="Obrigatório para recuperar sua senha" required />
                       <TextField
                         label={`Senha de acesso (mínimo ${PASSWORD_MIN_LENGTH} caracteres)`}
                         value={user.password}
@@ -1065,6 +1079,11 @@ function LoginView({ title, expectedRole, destinationView, setAuth, setView }) {
         <button className="button primary full" type="submit" disabled={loading}>
           <LogIn size={18} /> {loading ? 'Entrando...' : 'Entrar'}
         </button>
+        {['usuario', 'admin'].includes(expectedRole) ? (
+          <button className="forgot-password-link" type="button" onClick={() => setView(expectedRole === 'admin' ? 'forgot-password-admin' : 'forgot-password')}>
+            <KeyRound size={16} /> Esqueci minha senha
+          </button>
+        ) : null}
         {expectedRole === 'protetor' ? (
           <p className="muted">
             Primeiro acesso de Protetor Cadastrado: solicite orientação pelo botão "Torne-se um Protetor Cadastrado" na página inicial ou pela administração do programa.
@@ -1074,6 +1093,159 @@ function LoginView({ title, expectedRole, destinationView, setAuth, setView }) {
         ) : (
           <p className="muted">Área restrita. Entre em contato com a administração para obter acesso.</p>
         )}
+      </form>
+    </section>
+  );
+}
+
+function ForgotPasswordView({ setView, adminRecovery = false }) {
+  const [cpf, setCpf] = useState('');
+  const [error, setError] = useState('');
+  const [message, setMessage] = useState('');
+  const [loading, setLoading] = useState(false);
+
+  async function submit(event) {
+    event.preventDefault();
+    setError('');
+    setMessage('');
+    if (onlyDigits(cpf).length !== CPF_DIGITS_LENGTH) {
+      setError('Informe um CPF válido com 11 dígitos.');
+      return;
+    }
+    setLoading(true);
+    try {
+      const data = await request('/auth/forgot-password', {
+        method: 'POST',
+        body: { cpf: onlyDigits(cpf) }
+      });
+      if (data.action === 'whatsapp' && data.whatsappUrl) {
+        window.location.assign(data.whatsappUrl);
+        return;
+      }
+      setMessage(data.message);
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  return (
+    <section className="auth-layout">
+      <form className="auth-panel password-recovery-panel" onSubmit={submit}>
+        <div className="auth-brand">
+          <div className="brand-mark"><img src="/brasao.png" alt="Brasão Nova Iguaçu" className="brand-brasao" /></div>
+        </div>
+        <div className="recovery-icon"><Mail size={24} /></div>
+        <div className="section-title compact">
+          <span className="eyebrow">{adminRecovery ? 'Área Administrativa' : 'Área do Tutor'}</span>
+          <h2>Recuperar senha</h2>
+          <p>Informe seu CPF. Enviaremos um link para o e-mail utilizado no cadastro.</p>
+        </div>
+        {error ? <InlineAlert message={error} /> : null}
+        {message ? <div className="inline-success"><CheckCircle2 size={18} />{message}</div> : null}
+        {!message ? (
+          <>
+            <TextField label="CPF" value={cpf} onChange={(value) => setCpf(maskCpf(value))} required inputMode="numeric" maxLength={14} />
+            <button className="button primary full" type="submit" disabled={loading}>
+              <Mail size={18} /> {loading ? 'Enviando...' : 'Enviar link de recuperação'}
+            </button>
+          </>
+        ) : null}
+        <button className="button ghost full" type="button" onClick={() => setView(adminRecovery ? 'admin' : 'usuario')}>
+          Voltar para o login
+        </button>
+      </form>
+    </section>
+  );
+}
+
+function ResetPasswordView({ token, setView }) {
+  const [password, setPassword] = useState('');
+  const [confirmation, setConfirmation] = useState('');
+  const [status, setStatus] = useState('checking');
+  const [error, setError] = useState('');
+  const [message, setMessage] = useState('');
+  const [accountRole, setAccountRole] = useState('tutor');
+
+  useEffect(() => {
+    if (!token) {
+      setStatus('invalid');
+      setError('Link de recuperação inválido.');
+      return;
+    }
+    request(`/auth/reset-password/${encodeURIComponent(token)}`)
+      .then((data) => {
+        setAccountRole(data.role || 'tutor');
+        setStatus('ready');
+      })
+      .catch((err) => {
+        setStatus('invalid');
+        setError(err.message);
+      });
+  }, [token]);
+
+  function returnToLogin() {
+    window.history.replaceState({}, '', window.location.pathname);
+    setView(accountRole === 'admin' ? 'admin' : 'usuario');
+  }
+
+  async function submit(event) {
+    event.preventDefault();
+    setError('');
+    if (password.length < PASSWORD_MIN_LENGTH) {
+      setError(`A nova senha deve ter pelo menos ${PASSWORD_MIN_LENGTH} caracteres.`);
+      return;
+    }
+    if (password !== confirmation) {
+      setError('A confirmação não corresponde à nova senha.');
+      return;
+    }
+    setStatus('saving');
+    try {
+      const data = await request('/auth/reset-password', {
+        method: 'POST',
+        body: { token, password }
+      });
+      window.history.replaceState({}, '', window.location.pathname);
+      setAccountRole(data.role || accountRole);
+      setMessage(data.message);
+      setStatus('success');
+    } catch (err) {
+      setError(err.message);
+      setStatus('ready');
+    }
+  }
+
+  return (
+    <section className="auth-layout">
+      <form className="auth-panel password-recovery-panel" onSubmit={submit}>
+        <div className="auth-brand">
+          <div className="brand-mark"><img src="/brasao.png" alt="Brasão Nova Iguaçu" className="brand-brasao" /></div>
+        </div>
+        <div className="recovery-icon"><KeyRound size={24} /></div>
+        <div className="section-title compact">
+          <span className="eyebrow">{accountRole === 'admin' ? 'Área Administrativa' : 'Área do Tutor'}</span>
+          <h2>Criar nova senha</h2>
+          <p>Escolha uma senha com pelo menos {PASSWORD_MIN_LENGTH} caracteres.</p>
+        </div>
+        {status === 'checking' ? <Loading label="Validando link" /> : null}
+        {error ? <InlineAlert message={error} /> : null}
+        {message ? <div className="inline-success"><CheckCircle2 size={18} />{message}</div> : null}
+        {status === 'ready' || status === 'saving' ? (
+          <>
+            <TextField label="Nova senha" value={password} onChange={setPassword} type="password" required />
+            <TextField label="Confirmar nova senha" value={confirmation} onChange={setConfirmation} type="password" required />
+            <button className="button primary full" type="submit" disabled={status === 'saving'}>
+              <KeyRound size={18} /> {status === 'saving' ? 'Salvando...' : 'Salvar nova senha'}
+            </button>
+          </>
+        ) : null}
+        {status === 'invalid' || status === 'success' ? (
+          <button className="button secondary full" type="button" onClick={returnToLogin}>
+            Ir para o login
+          </button>
+        ) : null}
       </form>
     </section>
   );
@@ -1103,7 +1275,7 @@ async function openDocument(userId, type, token) {
 }
 
 
-function UserDashboard({ auth, setView }) {
+function UserDashboard({ auth, setView, onUserUpdated }) {
   const [data, setData] = useState(null);
   const [error, setError] = useState('');
   const [editingResponsibleId, setEditingResponsibleId] = useState(null);
@@ -1132,8 +1304,32 @@ function UserDashboard({ auth, setView }) {
     }
   }
 
+  async function markNotificationRead(id) {
+    try {
+      await request(`/me/notifications/${id}/read`, { method: 'POST', body: {} }, auth.token);
+      setData((current) => ({
+        ...current,
+        notifications: (current.notifications || []).filter((notification) => notification.id !== id)
+      }));
+    } catch (err) {
+      setError(err.message);
+    }
+  }
+
   if (error) return <InlineAlert message={error} />;
   if (!data) return <Loading label="Carregando área do usuário" />;
+  if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(data.user.email || '')) {
+    return (
+      <RequiredEmailUpdate
+        auth={auth}
+        user={data.user}
+        onSaved={(user) => {
+          setData((current) => ({ ...current, user }));
+          onUserUpdated?.(user);
+        }}
+      />
+    );
+  }
 
   const firstName = data.user.name ? data.user.name.split(' ')[0] : '';
   const limitLabel = data.limit === null ? 'Ilimitado' : data.limit;
@@ -1147,6 +1343,34 @@ function UserDashboard({ auth, setView }) {
           Seu cadastro está ativo. Para solicitar a castração, clique em agendar, informe os dados do animal e escolha uma clínica com vaga disponível.
         </p>
       </div>
+      {(data.notifications || []).length ? (
+        <div className="user-notifications" aria-live="polite">
+          {(data.notifications || []).map((notification) => (
+            <article className="reschedule-notification" key={notification.id}>
+              <div className="notification-icon"><Bell size={21} /></div>
+              <div className="notification-content">
+                <strong>{notification.title}</strong>
+                <p>{notification.message}</p>
+                <div className="notification-schedule-change">
+                  <div>
+                    <span>Agendamento anterior</span>
+                    <strong>{formatDate(notification.old_date)} às {notification.old_time}</strong>
+                    <small>{notification.old_clinic}</small>
+                  </div>
+                  <div>
+                    <span>Novo agendamento</span>
+                    <strong>{formatDate(notification.new_date)} às {notification.new_time}</strong>
+                    <small>{notification.new_clinic}</small>
+                  </div>
+                </div>
+              </div>
+              <button className="button secondary small" type="button" onClick={() => markNotificationRead(notification.id)}>
+                Entendi
+              </button>
+            </article>
+          ))}
+        </div>
+      ) : null}
       <div className="metric-row">
         <Metric icon={Calendar} label="Limite mensal" value={limitLabel} />
         <Metric icon={CheckCircle2} label="Usados no mês" value={data.currentMonthUsed} />
@@ -1230,6 +1454,59 @@ function UserDashboard({ auth, setView }) {
         }) : <p className="muted">Nenhum agendamento encontrado.</p>}
       </div>
       {data.user.role === 'protetor' ? <ChangePasswordForm auth={auth} /> : null}
+    </section>
+  );
+}
+
+function RequiredEmailUpdate({ auth, user, onSaved }) {
+  const [email, setEmail] = useState('');
+  const [confirmation, setConfirmation] = useState('');
+  const [error, setError] = useState('');
+  const [saving, setSaving] = useState(false);
+
+  async function submit(event) {
+    event.preventDefault();
+    setError('');
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+      setError('Informe um e-mail válido.');
+      return;
+    }
+    if (email.trim().toLowerCase() !== confirmation.trim().toLowerCase()) {
+      setError('A confirmação não corresponde ao e-mail informado.');
+      return;
+    }
+    setSaving(true);
+    try {
+      const data = await request('/me/email', {
+        method: 'PATCH',
+        body: { email: email.trim().toLowerCase() }
+      }, auth.token);
+      onSaved(data.user);
+    } catch (err) {
+      setError(err.message);
+      setSaving(false);
+    }
+  }
+
+  return (
+    <section className="auth-layout">
+      <form className="auth-panel required-email-panel" onSubmit={submit}>
+        <div className="auth-brand">
+          <div className="brand-mark"><img src="/brasao.png" alt="Brasão Nova Iguaçu" className="brand-brasao" /></div>
+        </div>
+        <div className="recovery-icon"><Mail size={24} /></div>
+        <div className="section-title compact">
+          <span className="eyebrow">Atualização obrigatória</span>
+          <h2>Vincule seu e-mail</h2>
+          <p>Olá, {user.name?.split(' ')[0] || 'tutor'}. Precisamos do seu e-mail para proteger seu acesso e permitir a recuperação da senha.</p>
+        </div>
+        {error ? <InlineAlert message={error} /> : null}
+        <TextField label="E-mail" value={email} onChange={setEmail} type="email" required />
+        <TextField label="Confirmar e-mail" value={confirmation} onChange={setConfirmation} type="email" required />
+        <button className="button primary full" type="submit" disabled={saving}>
+          <Save size={18} /> {saving ? 'Salvando...' : 'Salvar e continuar'}
+        </button>
+      </form>
     </section>
   );
 }
@@ -1620,6 +1897,7 @@ function AdminPanel({ auth }) {
           ['clinics', Building2, 'Clínicas'],
           ['slots', Calendar, 'Vagas'],
           ['appointments', ClipboardCheck, 'Agendamentos'],
+          ['logs', History, 'Auditoria'],
           ['users', Users, 'Usuários'],
           ['protectors', Shield, 'Protetores Cadastrados'],
           ['reports', BarChart2, 'Relatórios']
@@ -1633,7 +1911,8 @@ function AdminPanel({ auth }) {
       {tab === 'dashboard' ? <AdminSummary summary={summary} reports={reports} /> : null}
       {tab === 'clinics' ? <ClinicsTab clinics={clinics} reload={loadAll} auth={auth} /> : null}
       {tab === 'slots' ? <SlotsTab slots={slots} clinics={clinics} reload={loadAll} auth={auth} /> : null}
-      {tab === 'appointments' ? <AppointmentsTab appointments={appointments} reload={loadAll} auth={auth} /> : null}
+      {tab === 'appointments' ? <AppointmentsTab appointments={appointments} slots={slots} clinics={clinics} reload={loadAll} auth={auth} /> : null}
+      {tab === 'logs' ? <AuditLogsTab auth={auth} /> : null}
       {tab === 'users' ? <UsersTab users={users} clinics={clinics} reload={loadAll} auth={auth} /> : null}
       {tab === 'protectors' ? <ProtectorsTab protectors={protectors} clinics={clinics} reload={loadAll} auth={auth} /> : null}
       {tab === 'reports' ? <ReportsTab reports={reports} /> : null}
@@ -2621,6 +2900,318 @@ function ClinicsTab({ clinics, reload, auth }) {
 }
 
 const SLOTS_PAGE_SIZE = 20;
+const SLOT_LOGS_PAGE_SIZE = 30;
+const SLOT_LOG_ACTIONS = {
+  created: ['Criada', 'created'],
+  renewed: ['Renovada', 'renewed'],
+  updated: ['Editada', 'updated'],
+  deactivated: ['Cancelada/desativada', 'deactivated'],
+  deleted: ['Excluída definitivamente', 'deleted'],
+  month_published: ['Mês publicado', 'published'],
+  month_scheduled: ['Publicação agendada', 'scheduled'],
+  month_hidden: ['Mês ocultado', 'hidden'],
+  system_blocked: ['Criação automática bloqueada', 'blocked']
+};
+const ADMIN_AUDIT_ACTIONS = {
+  email_changed: ['E-mail alterado', 'updated'],
+  appointment_rescheduled: ['Agendamento remarcado', 'rescheduled']
+};
+
+function AuditLogsTab({ auth }) {
+  const [section, setSection] = useState('administrative');
+  return (
+    <div className="audit-environment">
+      <div className="tabs audit-subtabs" role="tablist" aria-label="Seções da auditoria">
+        <button className={section === 'administrative' ? 'active' : ''} type="button" onClick={() => setSection('administrative')}>
+          <Shield size={17} /> Ações administrativas
+        </button>
+        <button className={section === 'slots' ? 'active' : ''} type="button" onClick={() => setSection('slots')}>
+          <Calendar size={17} /> Vagas e publicações
+        </button>
+      </div>
+      {section === 'administrative' ? <AdminAuditLogsTab auth={auth} /> : <SlotLogsTab auth={auth} />}
+    </div>
+  );
+}
+
+function AdminAuditLogsTab({ auth }) {
+  const [logs, setLogs] = useState([]);
+  const [filters, setFilters] = useState({ action: '', actor: '', target: '', date: '' });
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState('');
+  const [page, setPage] = useState(1);
+
+  useEffect(() => {
+    let cancelled = false;
+    request('/admin/audit-logs', {}, auth.token)
+      .then((data) => {
+        if (!cancelled) {
+          setLogs(data.logs || []);
+          setError('');
+        }
+      })
+      .catch((err) => {
+        if (!cancelled) setError(err.message);
+      })
+      .finally(() => {
+        if (!cancelled) setLoading(false);
+      });
+    return () => { cancelled = true; };
+  }, [auth.token]);
+
+  const filteredLogs = useMemo(() => {
+    const filterDate = toIsoDate(filters.date);
+    const actor = normalizeSearch(filters.actor);
+    const target = normalizeSearch(filters.target);
+    return logs.filter((log) => (
+      (!filters.action || log.action === filters.action) &&
+      (!filterDate || String(log.event_at || '').slice(0, 10) === filterDate) &&
+      (!actor || normalizeSearch(`${log.actor_name || ''} ${log.actor_cpf || ''}`).includes(actor)) &&
+      (!target || normalizeSearch(`${log.target_user_name || ''} ${log.target_user_cpf || ''} ${log.protocol || ''}`).includes(target))
+    ));
+  }, [logs, filters]);
+
+  useEffect(() => { setPage(1); }, [filters]);
+
+  const totalPages = Math.max(1, Math.ceil(filteredLogs.length / SLOT_LOGS_PAGE_SIZE));
+  const safePage = Math.min(page, totalPages);
+  const pagedLogs = filteredLogs.slice((safePage - 1) * SLOT_LOGS_PAGE_SIZE, safePage * SLOT_LOGS_PAGE_SIZE);
+
+  return (
+    <div className="admin-section slot-logs-section">
+      <div className="section-title compact">
+        <span className="eyebrow">Auditoria administrativa</span>
+        <h3>E-mails e remarcações</h3>
+        <p>Consulte alterações de e-mail e remarcações realizadas por administradores.</p>
+      </div>
+      {error ? <InlineAlert message={error} /> : null}
+      <div className="filter-bar admin-audit-filters">
+        <label className="field">
+          <span>Ação</span>
+          <select value={filters.action} onChange={(event) => setFilters({ ...filters, action: event.target.value })}>
+            <option value="">Todas</option>
+            {Object.entries(ADMIN_AUDIT_ACTIONS).map(([value, [label]]) => (
+              <option key={value} value={value}>{label}</option>
+            ))}
+          </select>
+        </label>
+        <TextField label="Administrador" value={filters.actor} onChange={(value) => setFilters({ ...filters, actor: value })} />
+        <TextField label="Tutor, CPF ou protocolo" value={filters.target} onChange={(value) => setFilters({ ...filters, target: value })} />
+        <DateField label="Data da ação" value={filters.date} onChange={(value) => setFilters({ ...filters, date: value })} />
+        <button className="button ghost filter-clear-button" type="button" onClick={() => setFilters({ action: '', actor: '', target: '', date: '' })}>
+          <XCircle size={17} /> Limpar filtros
+        </button>
+      </div>
+      <div className="slot-logs-count">
+        <strong>{filteredLogs.length}</strong> evento{filteredLogs.length !== 1 ? 's' : ''} encontrado{filteredLogs.length !== 1 ? 's' : ''}
+      </div>
+      {loading ? <Loading label="Carregando auditoria" /> : (
+        <>
+          <DataTable
+            className="slot-logs-table admin-audit-table"
+            columns={['Data da ação', 'Ação', 'Administrador', 'Usuário afetado', 'Antes', 'Depois', 'Observação']}
+            rows={pagedLogs.map((log) => {
+              const [actionLabel, actionClass] = ADMIN_AUDIT_ACTIONS[log.action] || [log.action, 'updated'];
+              const emailChange = log.action === 'email_changed';
+              return [
+                <strong key={`date-${log.id}`}>{formatReleaseDateTime(log.event_at)}</strong>,
+                <StatusBadge key={`action-${log.id}`} status={`audit-${actionClass}`} label={actionLabel} />,
+                <div key={`actor-${log.id}`} className="slot-log-actor">
+                  <strong>{log.actor_name}</strong>
+                  {log.actor_cpf ? <span>CPF {maskCpf(log.actor_cpf)}</span> : null}
+                </div>,
+                <div key={`target-${log.id}`} className="slot-log-subject">
+                  <strong>{log.target_user_name || '-'}</strong>
+                  {log.target_user_cpf ? <span>CPF {maskCpf(log.target_user_cpf)}</span> : null}
+                  {log.protocol ? <span>Protocolo {log.protocol}</span> : null}
+                </div>,
+                emailChange ? (log.old_email || 'Sem e-mail') : (
+                  <div key={`before-${log.id}`} className="slot-log-subject">
+                    <strong>{formatDate(log.old_date)} às {log.old_time}</strong>
+                    <span>{log.old_clinic}</span>
+                    {log.old_slot_id ? <span>Vaga #{log.old_slot_id}</span> : null}
+                  </div>
+                ),
+                emailChange ? (log.new_email || 'E-mail removido') : (
+                  <div key={`after-${log.id}`} className="slot-log-subject">
+                    <strong>{formatDate(log.new_date)} às {log.new_time}</strong>
+                    <span>{log.new_clinic}</span>
+                    {log.new_slot_id ? <span>Vaga #{log.new_slot_id}</span> : null}
+                  </div>
+                ),
+                log.details || '-'
+              ];
+            })}
+          />
+          <Pagination page={safePage} totalPages={totalPages} onChange={setPage} />
+        </>
+      )}
+    </div>
+  );
+}
+
+function formatSlotLogObservation(log) {
+  const details = String(log.details || '').trim();
+  if (log.action === 'created') return details || 'Criada manualmente.';
+  if (log.action === 'renewed') {
+    if (/renovação mensal automática/i.test(details)) return 'Criada por renovação automática.';
+    if (/criada pelo botão "Renovar Vagas"/i.test(details)) return details;
+    return `Criada pelo botão "Renovar Vagas".${details ? ` ${details}` : ''}`;
+  }
+  return details || '-';
+}
+
+function SlotLogsTab({ auth }) {
+  const [logs, setLogs] = useState([]);
+  const [filters, setFilters] = useState({ action: '', clinic_id: '', month: '', actor: '', date: '' });
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState('');
+  const [page, setPage] = useState(1);
+
+  useEffect(() => {
+    let cancelled = false;
+    setLoading(true);
+    request('/admin/slot-logs', {}, auth.token)
+      .then((data) => {
+        if (!cancelled) {
+          setLogs(data.logs || []);
+          setError('');
+        }
+      })
+      .catch((err) => {
+        if (!cancelled) setError(err.message);
+      })
+      .finally(() => {
+        if (!cancelled) setLoading(false);
+      });
+    return () => { cancelled = true; };
+  }, [auth.token]);
+
+  const clinicOptions = useMemo(() => {
+    const clinics = new Map();
+    logs.forEach((log) => {
+      if (log.clinic_id && log.clinic_name) clinics.set(String(log.clinic_id), log.clinic_name);
+    });
+    return [...clinics.entries()]
+      .map(([id, name]) => ({ id, name }))
+      .sort((a, b) => a.name.localeCompare(b.name, 'pt-BR'));
+  }, [logs]);
+
+  const monthOptions = useMemo(() => (
+    [...new Set(logs.map((log) => log.release_month || String(log.slot_date || '').slice(0, 7)).filter(Boolean))]
+      .sort()
+      .reverse()
+  ), [logs]);
+
+  const filteredLogs = useMemo(() => {
+    const filterDate = toIsoDate(filters.date);
+    const actor = filters.actor.trim().toLocaleLowerCase('pt-BR');
+    return logs.filter((log) => (
+      (!filters.action || log.action === filters.action) &&
+      (!filters.clinic_id || String(log.clinic_id) === filters.clinic_id) &&
+      (!filters.month || (log.release_month || String(log.slot_date || '').slice(0, 7)) === filters.month) &&
+      (!filterDate || String(log.event_at || '').slice(0, 10) === filterDate) &&
+      (!actor || String(log.actor_name || '').toLocaleLowerCase('pt-BR').includes(actor))
+    ));
+  }, [logs, filters]);
+
+  useEffect(() => { setPage(1); }, [filters]);
+
+  const totalPages = Math.max(1, Math.ceil(filteredLogs.length / SLOT_LOGS_PAGE_SIZE));
+  const safePage = Math.min(page, totalPages);
+  const pagedLogs = filteredLogs.slice((safePage - 1) * SLOT_LOGS_PAGE_SIZE, safePage * SLOT_LOGS_PAGE_SIZE);
+
+  return (
+    <div className="admin-section slot-logs-section">
+      <div className="section-title compact">
+        <span className="eyebrow">Auditoria administrativa</span>
+        <h3>Histórico de vagas</h3>
+        <p>Consulte quem criou, alterou, disponibilizou, cancelou ou excluiu vagas.</p>
+      </div>
+      {error ? <InlineAlert message={error} /> : null}
+      <div className="filter-bar slot-logs-filters" aria-label="Filtros dos logs de vagas">
+        <label className="field">
+          <span>Ação</span>
+          <select value={filters.action} onChange={(event) => setFilters({ ...filters, action: event.target.value })}>
+            <option value="">Todas</option>
+            {Object.entries(SLOT_LOG_ACTIONS).map(([value, [label]]) => (
+              <option key={value} value={value}>{label}</option>
+            ))}
+          </select>
+        </label>
+        <label className="field">
+          <span>Clínica</span>
+          <select value={filters.clinic_id} onChange={(event) => setFilters({ ...filters, clinic_id: event.target.value })}>
+            <option value="">Todas as clínicas</option>
+            {clinicOptions.map((clinic) => (
+              <option key={clinic.id} value={clinic.id}>{clinic.name}</option>
+            ))}
+          </select>
+        </label>
+        <label className="field">
+          <span>Mês da vaga</span>
+          <select value={filters.month} onChange={(event) => setFilters({ ...filters, month: event.target.value })}>
+            <option value="">Todos os meses</option>
+            {monthOptions.map((month) => (
+              <option key={month} value={month}>{formatMonthYear(month)}</option>
+            ))}
+          </select>
+        </label>
+        <TextField
+          label="Administrador"
+          value={filters.actor}
+          onChange={(value) => setFilters({ ...filters, actor: value })}
+        />
+        <DateField label="Data da ação" value={filters.date} onChange={(value) => setFilters({ ...filters, date: value })} />
+        <button
+          className="button ghost filter-clear-button"
+          type="button"
+          onClick={() => setFilters({ action: '', clinic_id: '', month: '', actor: '', date: '' })}
+        >
+          <XCircle size={17} /> Limpar filtros
+        </button>
+      </div>
+      <div className="slot-logs-count">
+        <strong>{filteredLogs.length}</strong> evento{filteredLogs.length !== 1 ? 's' : ''} encontrado{filteredLogs.length !== 1 ? 's' : ''}
+      </div>
+      {loading ? <Loading label="Carregando histórico" /> : (
+        <>
+          <DataTable
+            className="slot-logs-table"
+            columns={['Data da ação', 'Ação', 'Administrador', 'Vaga ou mês', 'Clínica', 'Quantidade', 'Observação']}
+            rows={pagedLogs.map((log) => {
+              const [actionLabel, actionClass] = SLOT_LOG_ACTIONS[log.action] || [log.action, 'updated'];
+              const isMonthAction = Boolean(log.release_month);
+              return [
+                <strong key={`date-${log.id}`}>{formatReleaseDateTime(log.event_at)}</strong>,
+                <StatusBadge key={`action-${log.id}`} status={`audit-${actionClass}`} label={actionLabel} />,
+                <div key={`actor-${log.id}`} className="slot-log-actor">
+                  <strong>{log.actor_name}</strong>
+                  {log.actor_cpf ? <span>CPF {maskCpf(log.actor_cpf)}</span> : null}
+                </div>,
+                isMonthAction ? (
+                  <div key={`slot-${log.id}`} className="slot-log-subject">
+                    <strong>{formatMonthYear(log.release_month)}</strong>
+                    {log.release_at ? <span>Para {formatReleaseDateTime(log.release_at)}</span> : null}
+                  </div>
+                ) : (
+                  <div key={`slot-${log.id}`} className="slot-log-subject">
+                    <strong>#{log.slot_id} · {formatDate(log.slot_date)} às {log.slot_time}</strong>
+                    <span>{capitalize(animalLabel(log.species, log.sex))}</span>
+                  </div>
+                ),
+                log.clinic_name || (isMonthAction ? 'Todas do mês' : '-'),
+                log.total_quantity ?? '-',
+                formatSlotLogObservation(log)
+              ];
+            })}
+          />
+          <Pagination page={safePage} totalPages={totalPages} onChange={setPage} />
+        </>
+      )}
+    </div>
+  );
+}
 
 function SlotsTab({ slots, clinics, reload, auth }) {
   const blank = { date: '', time: '09:00', species: 'gato', sex: 'femea', total_quantity: 1, clinic_id: '' };
@@ -3225,10 +3816,11 @@ function AppointmentResponsibleInfo({ appointment }) {
   );
 }
 
-function AppointmentsTab({ appointments, reload, auth }) {
+function AppointmentsTab({ appointments, slots = [], clinics = [], reload, auth }) {
   const [drafts, setDrafts] = useState({});
   const [rowErrors, setRowErrors] = useState({});
   const [rowMessages, setRowMessages] = useState({});
+  const [rescheduling, setRescheduling] = useState(null);
 
   function draftFor(appointment) {
     return drafts[appointment.id] || { status: appointment.status, reason: appointment.reason || '', microchip: appointment.microchip || '' };
@@ -3265,6 +3857,22 @@ function AppointmentsTab({ appointments, reload, auth }) {
     } catch (err) {
       setRowErrors(prev => ({ ...prev, [appointment.id]: err.message }));
     }
+  }
+
+  if (rescheduling) {
+    return (
+      <AppointmentRescheduleScreen
+        appointment={rescheduling}
+        slots={slots}
+        clinics={clinics}
+        auth={auth}
+        onCancel={() => setRescheduling(null)}
+        onSaved={() => {
+          setRescheduling(null);
+          reload();
+        }}
+      />
+    );
   }
 
   return (
@@ -3331,12 +3939,145 @@ function AppointmentsTab({ appointments, reload, auth }) {
                 <Save size={18} />
                 <span>Salvar</span>
               </button>
+              {auth.user.role === 'admin' && appointment.status === 'agendado' ? (
+                <button className="button ghost table-save" type="button" onClick={() => setRescheduling(appointment)} title="Alterar clínica, data e horário">
+                  <Edit3 size={18} />
+                  <span>Remarcar</span>
+                </button>
+              ) : null}
               {rowErrors[appointment.id] ? <span className="row-save-error">{rowErrors[appointment.id]}</span> : null}
               {rowMessages[appointment.id] ? <span className="row-save-success">{rowMessages[appointment.id]}</span> : null}
             </div>
           ];
         })}
       />
+    </div>
+  );
+}
+
+function AppointmentRescheduleScreen({ appointment, slots, clinics, auth, onCancel, onSaved }) {
+  const [clinicId, setClinicId] = useState(String(appointment.clinic_id || ''));
+  const [date, setDate] = useState(appointment.date || '');
+  const [slotId, setSlotId] = useState(String(appointment.slot_id || ''));
+  const [error, setError] = useState('');
+  const [saving, setSaving] = useState(false);
+
+  const compatibleSlots = useMemo(() => slots.filter((slot) => (
+    Boolean(slot.active) &&
+    slot.species === appointment.species &&
+    slot.sex === appointment.sex &&
+    slot.date >= getTodayIsoDate() &&
+    (Number(slot.available_quantity) > 0 || Number(slot.id) === Number(appointment.slot_id))
+  )), [slots, appointment]);
+
+  const selectableClinicIds = new Set(compatibleSlots.map((slot) => String(slot.clinic_id)));
+  const availableClinics = clinics.filter((clinic) => Boolean(clinic.active) && selectableClinicIds.has(String(clinic.id)));
+  const dates = [...new Set(
+    compatibleSlots
+      .filter((slot) => String(slot.clinic_id) === clinicId)
+      .map((slot) => slot.date)
+  )].sort();
+  const times = compatibleSlots
+    .filter((slot) => String(slot.clinic_id) === clinicId && slot.date === date)
+    .sort((a, b) => a.time.localeCompare(b.time));
+  const selectedSlot = compatibleSlots.find((slot) => String(slot.id) === slotId);
+  const unchanged = Number(slotId) === Number(appointment.slot_id);
+
+  function changeClinic(value) {
+    setClinicId(value);
+    setDate('');
+    setSlotId('');
+    setError('');
+  }
+
+  function changeDate(value) {
+    setDate(value);
+    setSlotId('');
+    setError('');
+  }
+
+  async function submit(event) {
+    event.preventDefault();
+    if (!slotId || unchanged) {
+      setError(unchanged ? 'Selecione uma clínica, data ou horário diferente do agendamento atual.' : 'Selecione a nova clínica, data e horário.');
+      return;
+    }
+    setSaving(true);
+    setError('');
+    try {
+      await request(`/admin/appointments/${appointment.id}/reschedule`, {
+        method: 'PUT',
+        body: { slotId: Number(slotId) }
+      }, auth.token);
+      onSaved();
+    } catch (err) {
+      setError(err.message);
+      setSaving(false);
+    }
+  }
+
+  return (
+    <div className="admin-section appointment-reschedule-screen">
+      <div className="section-title">
+        <span className="eyebrow">Remarcar agendamento</span>
+        <h3>{appointment.animal_name} · {appointment.user_name}</h3>
+        <p>Escolha uma vaga disponível compatível com {appointment.animal_type_label.toLowerCase()}.</p>
+      </div>
+
+      <div className="current-schedule-card">
+        <span>Agendamento atual</span>
+        <strong>{formatDate(appointment.date)} às {appointment.time}</strong>
+        <small>{appointment.clinic}{appointment.clinic_address ? ` · ${appointment.clinic_address}` : ''}</small>
+      </div>
+
+      <form onSubmit={submit}>
+        <div className="form-grid appointment-reschedule-fields">
+          <label className="field">
+            <span>Nova clínica *</span>
+            <select value={clinicId} onChange={(event) => changeClinic(event.target.value)} required>
+              <option value="">Selecione</option>
+              {availableClinics.map((clinic) => <option key={clinic.id} value={clinic.id}>{clinic.name}</option>)}
+            </select>
+          </label>
+          <label className="field">
+            <span>Nova data *</span>
+            <select value={date} onChange={(event) => changeDate(event.target.value)} required disabled={!clinicId}>
+              <option value="">Selecione</option>
+              {dates.map((item) => <option key={item} value={item}>{formatDate(item)}</option>)}
+            </select>
+          </label>
+          <label className="field">
+            <span>Novo horário *</span>
+            <select value={slotId} onChange={(event) => { setSlotId(event.target.value); setError(''); }} required disabled={!date}>
+              <option value="">Selecione</option>
+              {times.map((slot) => (
+                <option key={slot.id} value={slot.id}>
+                  {slot.time} · {slot.available_quantity} vaga{Number(slot.available_quantity) !== 1 ? 's' : ''}
+                  {Number(slot.id) === Number(appointment.slot_id) ? ' (atual)' : ''}
+                </option>
+              ))}
+            </select>
+          </label>
+        </div>
+        {selectedSlot && !unchanged ? (
+          <div className="new-schedule-summary">
+            <CheckCircle2 size={18} />
+            <span>
+              Novo agendamento: <strong>{formatDate(selectedSlot.date)} às {selectedSlot.time}</strong>, na <strong>{selectedSlot.clinic}</strong>.
+            </span>
+          </div>
+        ) : null}
+        {error ? <InlineAlert message={error} /> : null}
+        {!compatibleSlots.some((slot) => Number(slot.id) !== Number(appointment.slot_id)) ? (
+          <InlineAlert message="Não há outra vaga futura disponível para esta espécie e sexo." />
+        ) : null}
+        <div className="form-actions">
+          <button className="button ghost" type="button" onClick={onCancel} disabled={saving}>Voltar</button>
+          <button className="button primary" type="submit" disabled={saving || !slotId || unchanged}>
+            <Save size={18} /> {saving ? 'Salvando...' : 'Confirmar alteração'}
+          </button>
+        </div>
+      </form>
     </div>
   );
 }
@@ -3357,6 +4098,7 @@ function UserManager({ title, users, clinics, reload, auth, defaultRole }) {
     name: '',
     cpf: '',
     phone: '',
+    email: '',
     address: '',
     neighborhood: '',
     role: defaultRole,
@@ -3446,7 +4188,7 @@ function UserManager({ title, users, clinics, reload, auth, defaultRole }) {
     const search = normalizeSearch(filters.search);
     const searchDigits = onlyDigits(filters.search);
     return users.filter((user) => {
-      const searchable = normalizeSearch(`${user.name || ''} ${user.cpf || ''} ${user.phone || ''}`);
+      const searchable = normalizeSearch(`${user.name || ''} ${user.cpf || ''} ${user.phone || ''} ${user.email || ''}`);
       const searchableDigits = onlyDigits(`${user.cpf || ''} ${user.phone || ''}`);
       const status = user.active ? 'ativo' : 'inativo';
       return (
@@ -3472,6 +4214,7 @@ function UserManager({ title, users, clinics, reload, auth, defaultRole }) {
       name: user.name || '',
       cpf: user.cpf || '',
       phone: user.phone || '',
+      email: user.email || '',
       address: user.address || '',
       neighborhood: user.neighborhood || '',
       role: user.role || defaultRole,
@@ -3525,6 +4268,7 @@ function UserManager({ title, users, clinics, reload, auth, defaultRole }) {
         <TextField label="Nome" value={form.name} onChange={(value) => setForm({ ...form, name: value })} required />
         <TextField label="CPF" value={form.cpf} onChange={(value) => setForm({ ...form, cpf: value })} required />
         <TextField label="Telefone" value={form.phone} onChange={(value) => setForm({ ...form, phone: value })} />
+        <TextField label="E-mail" value={form.email} onChange={(value) => setForm({ ...form, email: value })} type="email" hint="Usado na recuperação de senha do tutor" />
         <TextField label="Endereço" value={form.address} onChange={(value) => setForm({ ...form, address: value })} />
         <TextField label="Bairro" value={form.neighborhood} onChange={(value) => setForm({ ...form, neighborhood: value })} />
         <label className="field">
@@ -3578,7 +4322,7 @@ function UserManager({ title, users, clinics, reload, auth, defaultRole }) {
         {error ? <InlineAlert message={error} /> : null}
       </div>
       <div className="filter-bar" aria-label="Filtros de usuários">
-        <TextField label="Nome, CPF ou telefone" value={filters.search} onChange={(value) => setFilters({ ...filters, search: value })} />
+        <TextField label="Nome, CPF, telefone ou e-mail" value={filters.search} onChange={(value) => setFilters({ ...filters, search: value })} />
         <label className="field">
           <span>Tipo</span>
           <select value={filters.role} onChange={(event) => setFilters({ ...filters, role: event.target.value })}>
@@ -3628,12 +4372,13 @@ function UserManager({ title, users, clinics, reload, auth, defaultRole }) {
         )}
       </div>
       <DataTable
-        columns={['', 'Nome', 'CPF', 'Telefone', 'Tipo', 'Clínica', 'Status', 'Ações']}
+        columns={['', 'Nome', 'CPF', 'Telefone', 'E-mail', 'Tipo', 'Clínica', 'Status', 'Ações']}
         rows={pagedUsers.map((user) => [
           <input key={`chk-${user.id}`} type="checkbox" checked={selectedIds.has(user.id)} onChange={() => toggleSelected(user.id)} />,
           user.name,
           maskCpf(user.cpf),
           user.phone || '-',
+          user.email || <span key={`email-${user.id}`} className="missing-email-label">Não cadastrado</span>,
           user.role,
           user.clinic_name || '-',
           user.active ? 'Ativo' : 'Inativo',
@@ -3968,6 +4713,21 @@ function DataTable({ columns, rows, className = '' }) {
           ))}
         </tbody>
       </table>
+    </div>
+  );
+}
+
+function Pagination({ page, totalPages, onChange }) {
+  if (totalPages <= 1) return null;
+  return (
+    <div className="pagination" aria-label="Paginação">
+      <button className="button ghost small" type="button" onClick={() => onChange(page - 1)} disabled={page <= 1}>
+        Anterior
+      </button>
+      <span>Página <strong>{page}</strong> de <strong>{totalPages}</strong></span>
+      <button className="button ghost small" type="button" onClick={() => onChange(page + 1)} disabled={page >= totalPages}>
+        Próxima
+      </button>
     </div>
   );
 }
