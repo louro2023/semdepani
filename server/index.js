@@ -505,7 +505,7 @@ app.post('/api/appointments/:id/cancel', requireAuth, (req, res) => {
     if (!appointment) throw httpError(404, 'Agendamento não encontrado.');
     if (req.user.role !== 'admin' && appointment.user_id !== req.user.id) throw httpError(403, 'Acesso negado.');
     if (appointment.status !== 'agendado') throw httpError(400, 'Somente agendamentos em aberto podem ser cancelados.');
-    changeAppointmentStatus(appointment.id, 'cancelado', req.body.reason || 'Cancelado pelo usuário.');
+    changeAppointmentStatus(appointment.id, 'cancelado', '', { cancellationActorRole: req.user.role });
     res.json({ appointment: getAppointmentDetails(appointment.id) });
   } catch (error) {
     sendError(res, error);
@@ -1078,7 +1078,10 @@ app.patch('/api/admin/appointments/:id/status', requireAppointmentManager, (req,
   try {
     assertCanManageAppointment(req.user, req.params.id);
     const { status, reason, microchip } = req.body;
-    changeAppointmentStatus(req.params.id, status, reason, { microchip });
+    changeAppointmentStatus(req.params.id, status, reason, {
+      microchip,
+      cancellationActorRole: req.user.role
+    });
     res.json({ appointment: getAppointmentDetails(req.params.id) });
   } catch (error) {
     sendError(res, error);
@@ -2060,6 +2063,7 @@ function changeAppointmentStatus(id, status, reason = '', options = {}) {
   const appointment = db.prepare('SELECT * FROM appointments WHERE id = ?').get(id);
   if (!appointment) throw httpError(404, 'Agendamento não encontrado.');
   if (appointment.status === status) {
+    if (status === 'cancelado') return;
     if (status === 'realizado') {
       db.prepare('UPDATE appointments SET reason = ?, microchip = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?').run(normalizeText(reason), microchipRaw, id);
     } else {
@@ -2068,6 +2072,9 @@ function changeAppointmentStatus(id, status, reason = '', options = {}) {
     return;
   }
   const microchipValue = status === 'realizado' ? microchipRaw : null;
+  const statusReason = status === 'cancelado'
+    ? cancellationReasonForRole(options.cancellationActorRole)
+    : normalizeText(reason);
 
   db.exec('BEGIN IMMEDIATE');
   try {
@@ -2094,12 +2101,24 @@ function changeAppointmentStatus(id, status, reason = '', options = {}) {
       UPDATE appointments
       SET status = ?, reason = ?, microchip = COALESCE(?, microchip), updated_at = CURRENT_TIMESTAMP
       WHERE id = ?
-    `).run(status, normalizeText(reason), microchipValue, id);
+    `).run(status, statusReason, microchipValue, id);
     db.exec('COMMIT');
   } catch (error) {
     db.exec('ROLLBACK');
     throw error;
   }
+}
+
+function cancellationReasonForRole(role) {
+  const reasons = {
+    tutor: 'Cancelado pelo tutor.',
+    protetor: 'Cancelado pelo protetor cadastrado.',
+    admin: 'Cancelado pelo administrador.',
+    clinica: 'Cancelado pela clínica.'
+  };
+  const reason = reasons[role];
+  if (!reason) throw httpError(403, 'Não foi possível identificar quem realizou o cancelamento.');
+  return reason;
 }
 
 function upsertAdminUser(input = {}) {

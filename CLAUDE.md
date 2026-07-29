@@ -371,6 +371,8 @@ Comportamento atual:
   - Nome do tutor.
 - Status, mes e tutor sao filtros aplicados no frontend sobre a lista carregada.
 - O botao de limpar filtros volta a exibicao para todos os resultados permitidos pelo perfil.
+- A lista exibe 60 agendamentos por pagina para administradores e usuarios de clinica.
+- Os filtros sao aplicados sobre todos os agendamentos carregados antes da paginacao.
 
 ### Area Admin - Agendamentos
 
@@ -447,6 +449,8 @@ O SQLite tambem protege a tabela com triggers de auditoria. Novas vagas precisam
 - O microchip aparece no relatorio de castracoes PDF e CSV.
 - Um agendamento cancelado so pode ser reaberto quando a vaga original ainda possui capacidade.
 - Nem mesmo o administrador pode ultrapassar `slots.total_quantity`; o incremento condicional e validado dentro da transacao.
+- Ao cancelar, o backend define o motivo conforme o perfil: tutor, protetor cadastrado, administrador ou clinica.
+- Administradores e clinicas nao podem editar o motivo de um agendamento ja cancelado nem atribuir o cancelamento ao tutor.
 
 ### Relatorios Administrativos
 

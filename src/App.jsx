@@ -1739,6 +1739,7 @@ function ClinicPanel({ auth }) {
   const [selectedDate, setSelectedDate] = useState('');
   const [selectedMonth, setSelectedMonth] = useState('');
   const [tutorSearch, setTutorSearch] = useState('');
+  const [page, setPage] = useState(1);
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(true);
   const isAdmin = auth.user.role === 'admin';
@@ -1754,6 +1755,12 @@ function ClinicPanel({ auth }) {
       ));
     },
     [appointments, selectedStatus, selectedDate, selectedMonth, tutorSearch]
+  );
+  const totalPages = Math.max(1, Math.ceil(filteredAppointments.length / CLINIC_APPOINTMENTS_PAGE_SIZE));
+  const safePage = Math.min(page, totalPages);
+  const visibleAppointments = filteredAppointments.slice(
+    (safePage - 1) * CLINIC_APPOINTMENTS_PAGE_SIZE,
+    safePage * CLINIC_APPOINTMENTS_PAGE_SIZE
   );
 
   async function loadAppointments(showLoading = true) {
@@ -1787,6 +1794,10 @@ function ClinicPanel({ auth }) {
   useEffect(() => {
     loadAppointments();
   }, [selectedClinicId]);
+
+  useEffect(() => {
+    setPage(1);
+  }, [selectedClinicId, selectedStatus, selectedDate, selectedMonth, tutorSearch]);
 
   return (
     <section className="admin-layout">
@@ -1838,7 +1849,13 @@ function ClinicPanel({ auth }) {
         </span>
       </div>
       {loading ? <Loading label="Carregando agendamentos" /> : (
-        <AppointmentsTab appointments={filteredAppointments} reload={() => loadAppointments(false)} auth={auth} />
+        <>
+          <div className="appointments-page-summary">
+            Exibindo {filteredAppointments.length ? (safePage - 1) * CLINIC_APPOINTMENTS_PAGE_SIZE + 1 : 0}–{Math.min(safePage * CLINIC_APPOINTMENTS_PAGE_SIZE, filteredAppointments.length)} de {filteredAppointments.length}
+          </div>
+          <AppointmentsTab appointments={visibleAppointments} reload={() => loadAppointments(false)} auth={auth} />
+          <Pagination page={safePage} totalPages={totalPages} onChange={setPage} />
+        </>
       )}
       {!isAdmin ? <ChangePasswordForm auth={auth} /> : null}
     </section>
@@ -2902,6 +2919,7 @@ function ClinicsTab({ clinics, reload, auth }) {
 const SLOTS_PAGE_SIZE = 20;
 const SLOT_LOGS_PAGE_SIZE = 30;
 const APPOINTMENTS_PAGE_SIZE = 50;
+const CLINIC_APPOINTMENTS_PAGE_SIZE = 60;
 const SLOT_LOG_ACTIONS = {
   created: ['Criada', 'created'],
   renewed: ['Renovada', 'renewed'],
@@ -3987,7 +4005,22 @@ function AppointmentsTab({ appointments, slots = [], clinics = [], reload, auth,
             <select
               key={`status-${appointment.id}`}
               value={draft.status}
-              onChange={(event) => setDrafts({ ...drafts, [appointment.id]: { ...draft, status: event.target.value } })}
+              onChange={(event) => {
+                const status = event.target.value;
+                const automaticCancellationReason = auth.user.role === 'admin'
+                  ? 'Cancelado pelo administrador.'
+                  : 'Cancelado pela clínica.';
+                setDrafts({
+                  ...drafts,
+                  [appointment.id]: {
+                    ...draft,
+                    status,
+                    reason: status === 'cancelado'
+                      ? automaticCancellationReason
+                      : draft.status === 'cancelado' ? '' : draft.reason
+                  }
+                });
+              }}
             >
               {APPOINTMENT_STATUS_OPTIONS.map(([value, label]) => (
                 <option key={value} value={value}>{label}</option>
@@ -4010,7 +4043,9 @@ function AppointmentsTab({ appointments, slots = [], clinics = [], reload, auth,
               className="table-input"
               value={draft.reason}
               onChange={(event) => setDrafts({ ...drafts, [appointment.id]: { ...draft, reason: event.target.value } })}
-              placeholder="Motivo"
+              placeholder={draft.status === 'cancelado' ? 'Definido automaticamente' : 'Motivo'}
+              disabled={draft.status === 'cancelado'}
+              title={draft.status === 'cancelado' ? 'A origem do cancelamento é definida automaticamente pelo sistema.' : 'Motivo do status'}
             />,
             <div key={`action-${appointment.id}`} className="table-action-cell">
               <button className="button secondary table-save" type="button" onClick={() => save(appointment)} title="Salvar status">
