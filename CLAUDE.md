@@ -85,7 +85,8 @@ dist/               Build Vite, gerado localmente/producao
 - Auditoria administrativa de vagas com filtros por acao, clinica, mes, administrador e data.
 - Criacao de vagas protegida contra insercoes automaticas ou sem autoria administrativa.
 - Remarcacao administrativa de agendamentos com troca transacional de vaga e notificacao ao tutor.
-- Aba Agendamentos do admin com filtros por tutor, mes e status, alem de paginacao de 50 registros.
+- Aba Agendamentos do admin com filtros por tutor, clinica, mes e status, alem de paginacao de 50 registros.
+- O bootstrap nao cria ou reativa clinicas e protetores; esses cadastros dependem de acao administrativa.
 - E-mail obrigatorio em novos cadastros; usuarios antigos sem e-mail precisam atualiza-lo depois do login.
 - Administrador pode cadastrar ou corrigir o e-mail na aba Usuarios.
 - Recuperacao de senha por token de uso unico para tutor, protetor e administrador.
@@ -374,9 +375,10 @@ Comportamento atual:
 ### Area Admin - Agendamentos
 
 - Exibe 50 agendamentos por pagina.
-- Permite filtrar por nome do tutor, mes e status.
+- Permite filtrar por nome do tutor, clinica, mes e status.
 - Os filtros sao aplicados sobre todos os agendamentos carregados antes da paginacao, portanto encontram resultados que estavam em qualquer pagina.
 - Alterar ou limpar um filtro retorna automaticamente para a primeira pagina dos resultados.
+- A opcao de remarcar fica disponivel somente nesta area para administradores; ela nao aparece no ambiente Clinica.
 
 ### Area Admin - Vagas
 
@@ -424,6 +426,8 @@ Compatibilidade: o backend ainda aceita o formato antigo com apenas `ids`. Nesse
 
 Nao existe criacao ou renovacao automatica de vagas no bootstrap, em timers ou no seed do banco. Toda insercao em `slots` exige uma rota autenticada com perfil de administrador.
 
+O bootstrap mantem somente a criacao do administrador inicial e migracoes de compatibilidade. Nao adicionar clinicas padrao, protetores de exemplo ou importacoes automaticas de documentos durante a inicializacao. Clinicas e protetores novos devem ser cadastrados pelo administrador; a importacao manual de protetores continua disponivel por CSV/XLSX na area administrativa.
+
 O SQLite tambem protege a tabela com triggers de auditoria. Novas vagas precisam informar `created_by_user_id` de um administrador ativo e `creation_source` como `manual` ou `renewed`. Uma insercao sem autoria administrativa valida e registrada como `system_blocked` em `slot_audit_logs` e a vaga e removida na mesma operacao, antes de poder ser exibida ou publicada.
 
 ### Troca de Senha (Protetor e Clinica)
@@ -441,6 +445,8 @@ O SQLite tambem protege a tabela com triggers de auditoria. Novas vagas precisam
 - Duplicata retorna erro 409 com mensagem identificando o agendamento conflitante.
 - O microchip e exibido na tabela de agendamentos da clinica/admin.
 - O microchip aparece no relatorio de castracoes PDF e CSV.
+- Um agendamento cancelado so pode ser reaberto quando a vaga original ainda possui capacidade.
+- Nem mesmo o administrador pode ultrapassar `slots.total_quantity`; o incremento condicional e validado dentro da transacao.
 
 ### Relatorios Administrativos
 

@@ -18,7 +18,7 @@ API: `http://127.0.0.1:4000`
 - Administrador: CPF `00000000000`
 - Senha: `admin123`
 
-Na primeira execução o sistema cria o banco SQLite em `data/castracao.sqlite` e importa as protetoras do arquivo `PROTETORAS CADASTRADAS.docx` quando ele existir em `Downloads`. As vagas são cadastradas ou renovadas exclusivamente por um administrador.
+Na primeira execução o sistema cria o banco SQLite em `data/castracao.sqlite`. Clínicas, protetores e vagas são cadastrados exclusivamente pelo administrador; o servidor não cria nem reativa registros de exemplo durante a inicialização.
 
 ## Regras implementadas
 

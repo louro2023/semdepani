@@ -1802,6 +1802,7 @@ select:focus,
 .appointments-filters {
   grid-template-columns:
     minmax(220px, 1.3fr)
+    minmax(180px, 1fr)
     minmax(170px, 0.8fr)
     minmax(170px, 0.8fr)
     minmax(150px, auto)

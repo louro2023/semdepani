@@ -1,11 +1,9 @@
 import crypto from 'node:crypto';
 import fs from 'node:fs';
-import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { DatabaseSync } from 'node:sqlite';
 import bcrypt from 'bcryptjs';
-import mammoth from 'mammoth';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const rootDir = path.resolve(__dirname, '..');
@@ -258,11 +256,9 @@ export function initSchema() {
   migrateGlobalSlotReleaseToMonths();
 }
 
-export async function seedDatabase() {
+export function seedDatabase() {
   seedAdmin();
-  seedClinics();
   migrateSlotClinics();
-  await seedProtectorsFromDownloads();
 }
 
 function ensureColumn(table, column, definition) {
@@ -505,16 +501,6 @@ function seedAdmin() {
   `).run(adminCpf, hash);
 }
 
-function seedClinics() {
-  const insert = db.prepare(`
-    INSERT INTO clinics (name, address, neighborhood, phone, active)
-    VALUES (?, ?, ?, ?, 1)
-    ON CONFLICT(name) DO NOTHING
-  `);
-  insert.run('Castramovel', 'Unidade movel - endereco definido pela administracao', 'Nova Iguacu', '',);
-  insert.run('Clinica TAK VET', 'Endereco da Clinica TAK VET a cadastrar', 'Nova Iguacu', '',);
-}
-
 function migrateSlotClinics() {
   const slots = db.prepare("SELECT DISTINCT clinic FROM slots WHERE clinic_id IS NULL AND clinic IS NOT NULL AND clinic != ''").all();
   const insert = db.prepare(`
@@ -531,82 +517,6 @@ function migrateSlotClinics() {
 
 function getClinicIdByName(name) {
   return db.prepare('SELECT id FROM clinics WHERE name = ?').get(name)?.id || null;
-}
-
-async function seedProtectorsFromDownloads() {
-  const alreadyImported = db.prepare("SELECT value FROM settings WHERE key = 'protectors_imported_at'").get();
-  if (alreadyImported) return;
-
-  const docsDir = process.env.SEED_DOCS_DIR || path.join(os.homedir(), 'Downloads');
-  const filePath = path.join(docsDir, 'PROTETORAS CADASTRADAS.docx');
-  if (!fs.existsSync(filePath)) {
-    seedFallbackProtectors();
-    return;
-  }
-
-  try {
-    const result = await mammoth.extractRawText({ path: filePath });
-    const imported = importProtectorsFromText(result.value);
-    db.prepare("INSERT OR REPLACE INTO settings (key, value) VALUES ('protectors_imported_at', CURRENT_TIMESTAMP)").run();
-    db.prepare("INSERT OR REPLACE INTO settings (key, value) VALUES ('protectors_imported_count', ?)").run(String(imported));
-  } catch (error) {
-    console.warn('Nao foi possivel importar protetoras do DOCX:', error.message);
-    seedFallbackProtectors();
-  }
-}
-
-function seedFallbackProtectors() {
-  const fallback = [
-    ['Protetora Exemplo', '11122233344', '(21) 99999-0000', 'Nova Iguacu', 'Centro']
-  ];
-  const stmt = db.prepare(`
-    INSERT INTO users (name, cpf, phone, address, neighborhood, role, city_confirmed, adult_confirmed, pre_registered, active)
-    VALUES (?, ?, ?, ?, ?, 'protetor', 1, 1, 1, 1)
-    ON CONFLICT(cpf) DO UPDATE SET role = 'protetor', pre_registered = 1, active = 1
-  `);
-  fallback.forEach((item) => stmt.run(...item));
-}
-
-function importProtectorsFromText(rawText) {
-  const lines = rawText
-    .split(/\r?\n/)
-    .map(normalizeText)
-    .filter(Boolean)
-    .filter((line) => !['NOME', 'ENDERECO', 'ENDEREÇO', 'CONTATO', 'CPF', 'PROTETORAS CADASTRADAS'].includes(line.toUpperCase()));
-
-  const insert = db.prepare(`
-    INSERT INTO users (name, cpf, phone, address, neighborhood, role, city_confirmed, adult_confirmed, pre_registered, active)
-    VALUES (?, ?, ?, ?, ?, 'protetor', 1, 1, 1, 1)
-    ON CONFLICT(cpf) DO UPDATE SET
-      name = excluded.name,
-      phone = excluded.phone,
-      address = excluded.address,
-      neighborhood = excluded.neighborhood,
-      role = 'protetor',
-      pre_registered = 1,
-      active = 1,
-      updated_at = CURRENT_TIMESTAMP
-  `);
-
-  let imported = 0;
-  for (let index = 0; index < lines.length - 3;) {
-    const name = lines[index++];
-    const address = lines[index++] || '';
-    const phone = lines[index++] || '';
-    let cpfCandidate = lines[index++] || '';
-    let cpf = normalizeCpf(cpfCandidate);
-
-    while (cpf.length !== 11 && index < lines.length) {
-      cpfCandidate += lines[index++];
-      cpf = normalizeCpf(cpfCandidate);
-    }
-
-    if (!name || cpf.length !== 11 || /semana|feira|vagas/i.test(name)) continue;
-    insert.run(name, cpf, phone, address, inferNeighborhood(address));
-    imported += 1;
-  }
-
-  return imported;
 }
 
 export function createProtocol() {
@@ -643,25 +553,4 @@ export function toDateString(date) {
   const month = String(date.getMonth() + 1).padStart(2, '0');
   const day = String(date.getDate()).padStart(2, '0');
   return `${year}-${month}-${day}`;
-}
-
-function inferNeighborhood(address = '') {
-  const known = [
-    'Centro',
-    'Bairro da Luz',
-    'Santa Rita',
-    'Campo Alegre',
-    'Cabucu',
-    'Jardim Alvorada',
-    'Vila de Cava',
-    'Ipiranga',
-    'Grama',
-    'Austin',
-    'Posse',
-    'Tingua',
-    'Comendador Soares'
-  ];
-  const normalized = normalizeText(address).normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase();
-  const found = known.find((item) => normalized.includes(item.normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase()));
-  return found || '';
 }

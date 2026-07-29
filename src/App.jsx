@@ -1911,7 +1911,7 @@ function AdminPanel({ auth }) {
       {tab === 'dashboard' ? <AdminSummary summary={summary} reports={reports} /> : null}
       {tab === 'clinics' ? <ClinicsTab clinics={clinics} reload={loadAll} auth={auth} /> : null}
       {tab === 'slots' ? <SlotsTab slots={slots} clinics={clinics} reload={loadAll} auth={auth} /> : null}
-      {tab === 'appointments' ? <AppointmentsTab appointments={appointments} slots={slots} clinics={clinics} reload={loadAll} auth={auth} /> : null}
+      {tab === 'appointments' ? <AppointmentsTab appointments={appointments} slots={slots} clinics={clinics} reload={loadAll} auth={auth} adminManagement /> : null}
       {tab === 'logs' ? <AuditLogsTab auth={auth} /> : null}
       {tab === 'users' ? <UsersTab users={users} clinics={clinics} reload={loadAll} auth={auth} /> : null}
       {tab === 'protectors' ? <ProtectorsTab protectors={protectors} clinics={clinics} reload={loadAll} auth={auth} /> : null}
@@ -3817,14 +3817,14 @@ function AppointmentResponsibleInfo({ appointment }) {
   );
 }
 
-function AppointmentsTab({ appointments, slots = [], clinics = [], reload, auth }) {
+function AppointmentsTab({ appointments, slots = [], clinics = [], reload, auth, adminManagement = false }) {
   const [drafts, setDrafts] = useState({});
   const [rowErrors, setRowErrors] = useState({});
   const [rowMessages, setRowMessages] = useState({});
   const [rescheduling, setRescheduling] = useState(null);
-  const [filters, setFilters] = useState({ tutor: '', month: '', status: '' });
+  const [filters, setFilters] = useState({ tutor: '', clinic_id: '', month: '', status: '' });
   const [page, setPage] = useState(1);
-  const isAdmin = auth.user.role === 'admin';
+  const isAdminManagement = auth.user.role === 'admin' && adminManagement;
 
   const monthOptions = useMemo(() => (
     [...new Set(appointments.map((appointment) => String(appointment.date || '').slice(0, 7)).filter((month) => /^\d{4}-\d{2}$/.test(month)))]
@@ -3833,20 +3833,21 @@ function AppointmentsTab({ appointments, slots = [], clinics = [], reload, auth 
   ), [appointments]);
 
   const filteredAppointments = useMemo(() => {
-    if (!isAdmin) return appointments;
+    if (!isAdminManagement) return appointments;
     const tutor = normalizeSearch(filters.tutor);
     return appointments.filter((appointment) => (
       (!tutor || normalizeSearch(`${appointment.user_name || ''} ${appointment.user_cpf || ''}`).includes(tutor)) &&
+      (!filters.clinic_id || String(appointment.clinic_id || '') === filters.clinic_id) &&
       (!filters.month || String(appointment.date || '').slice(0, 7) === filters.month) &&
       (!filters.status || appointment.status === filters.status)
     ));
-  }, [appointments, filters, isAdmin]);
+  }, [appointments, filters, isAdminManagement]);
 
   useEffect(() => { setPage(1); }, [filters]);
 
-  const totalPages = isAdmin ? Math.max(1, Math.ceil(filteredAppointments.length / APPOINTMENTS_PAGE_SIZE)) : 1;
+  const totalPages = isAdminManagement ? Math.max(1, Math.ceil(filteredAppointments.length / APPOINTMENTS_PAGE_SIZE)) : 1;
   const safePage = Math.min(page, totalPages);
-  const visibleAppointments = isAdmin
+  const visibleAppointments = isAdminManagement
     ? filteredAppointments.slice((safePage - 1) * APPOINTMENTS_PAGE_SIZE, safePage * APPOINTMENTS_PAGE_SIZE)
     : filteredAppointments;
 
@@ -3905,7 +3906,7 @@ function AppointmentsTab({ appointments, slots = [], clinics = [], reload, auth 
 
   return (
     <div className="admin-section">
-      {isAdmin ? (
+      {isAdminManagement ? (
         <>
           <div className="filter-bar appointments-filters" aria-label="Filtros dos agendamentos">
             <TextField
@@ -3913,6 +3914,15 @@ function AppointmentsTab({ appointments, slots = [], clinics = [], reload, auth 
               value={filters.tutor}
               onChange={(value) => setFilters({ ...filters, tutor: value })}
             />
+            <label className="field">
+              <span>Clínica</span>
+              <select value={filters.clinic_id} onChange={(event) => setFilters({ ...filters, clinic_id: event.target.value })}>
+                <option value="">Todas as clínicas</option>
+                {clinics.map((clinic) => (
+                  <option key={clinic.id} value={clinic.id}>{clinic.name}</option>
+                ))}
+              </select>
+            </label>
             <label className="field">
               <span>Mês</span>
               <select value={filters.month} onChange={(event) => setFilters({ ...filters, month: event.target.value })}>
@@ -3931,7 +3941,7 @@ function AppointmentsTab({ appointments, slots = [], clinics = [], reload, auth 
                 ))}
               </select>
             </label>
-            <button className="button ghost filter-clear-button" type="button" onClick={() => setFilters({ tutor: '', month: '', status: '' })}>
+            <button className="button ghost filter-clear-button" type="button" onClick={() => setFilters({ tutor: '', clinic_id: '', month: '', status: '' })}>
               <XCircle size={17} /> Limpar filtros
             </button>
             <span className="filter-count">
@@ -4007,7 +4017,7 @@ function AppointmentsTab({ appointments, slots = [], clinics = [], reload, auth 
                 <Save size={18} />
                 <span>Salvar</span>
               </button>
-              {auth.user.role === 'admin' && appointment.status === 'agendado' ? (
+              {isAdminManagement && appointment.status === 'agendado' ? (
                 <button className="button ghost table-save" type="button" onClick={() => setRescheduling(appointment)} title="Alterar clínica, data e horário">
                   <Edit3 size={18} />
                   <span>Remarcar</span>
@@ -4019,7 +4029,7 @@ function AppointmentsTab({ appointments, slots = [], clinics = [], reload, auth 
           ];
         })}
       />
-      {isAdmin ? <Pagination page={safePage} totalPages={totalPages} onChange={setPage} /> : null}
+      {isAdminManagement ? <Pagination page={safePage} totalPages={totalPages} onChange={setPage} /> : null}
     </div>
   );
 }

@@ -1078,7 +1078,7 @@ app.patch('/api/admin/appointments/:id/status', requireAppointmentManager, (req,
   try {
     assertCanManageAppointment(req.user, req.params.id);
     const { status, reason, microchip } = req.body;
-    changeAppointmentStatus(req.params.id, status, reason, { allowCapacityOverride: req.user.role === 'admin', microchip });
+    changeAppointmentStatus(req.params.id, status, reason, { microchip });
     res.json({ appointment: getAppointmentDetails(req.params.id) });
   } catch (error) {
     sendError(res, error);
@@ -2081,14 +2081,14 @@ function changeAppointmentStatus(id, status, reason = '', options = {}) {
     if (appointment.status === 'cancelado' && status !== 'cancelado') {
       const slot = db.prepare('SELECT * FROM slots WHERE id = ?').get(appointment.slot_id);
       if (!slot) throw httpError(404, 'Vaga original não encontrada.');
-      if (!options.allowCapacityOverride && slot.occupied_quantity >= slot.total_quantity) {
-        throw httpError(409, 'A vaga original não possui disponibilidade.');
-      }
-      db.prepare(`
+      const reopened = db.prepare(`
         UPDATE slots
         SET occupied_quantity = occupied_quantity + 1, updated_at = CURRENT_TIMESTAMP
-        WHERE id = ?
+        WHERE id = ? AND occupied_quantity < total_quantity
       `).run(appointment.slot_id);
+      if (reopened.changes !== 1) {
+        throw httpError(409, 'A vaga original está lotada. O agendamento cancelado não pode ser reaberto.');
+      }
     }
     db.prepare(`
       UPDATE appointments
