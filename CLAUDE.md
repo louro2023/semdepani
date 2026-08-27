@@ -369,7 +369,8 @@ Comportamento atual:
   - Status: todos, agendado, realizado, nao realizado, cancelado.
   - Mes da data do agendamento.
   - Nome do tutor.
-- Status, mes e tutor sao filtros aplicados no frontend sobre a lista carregada.
+  - Numero do microchip, completo ou parcial, com ou sem espaco.
+- Status, mes, tutor e microchip sao filtros aplicados no frontend sobre a lista carregada.
 - O botao de limpar filtros volta a exibicao para todos os resultados permitidos pelo perfil.
 - A lista exibe 60 agendamentos por pagina para administradores e usuarios de clinica.
 - Os filtros sao aplicados sobre todos os agendamentos carregados antes da paginacao.
@@ -377,7 +378,7 @@ Comportamento atual:
 ### Area Admin - Agendamentos
 
 - Exibe 50 agendamentos por pagina.
-- Permite filtrar por nome do tutor, clinica, mes e status.
+- Permite filtrar por nome do tutor, microchip, clinica, mes e status.
 - Os filtros sao aplicados sobre todos os agendamentos carregados antes da paginacao, portanto encontram resultados que estavam em qualquer pagina.
 - Alterar ou limpar um filtro retorna automaticamente para a primeira pagina dos resultados.
 - A opcao de remarcar fica disponivel somente nesta area para administradores; ela nao aparece no ambiente Clinica.

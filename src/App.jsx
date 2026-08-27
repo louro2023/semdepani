@@ -1739,6 +1739,7 @@ function ClinicPanel({ auth }) {
   const [selectedDate, setSelectedDate] = useState('');
   const [selectedMonth, setSelectedMonth] = useState('');
   const [tutorSearch, setTutorSearch] = useState('');
+  const [microchipSearch, setMicrochipSearch] = useState('');
   const [page, setPage] = useState(1);
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(true);
@@ -1746,15 +1747,17 @@ function ClinicPanel({ auth }) {
   const filteredAppointments = useMemo(
     () => {
       const search = normalizeSearch(tutorSearch);
+      const microchip = onlyDigits(microchipSearch);
       const filterDate = toIsoDate(selectedDate);
       return appointments.filter((appointment) => (
         (!selectedStatus || appointment.status === selectedStatus) &&
         (!filterDate || toIsoDate(appointment.date) === filterDate) &&
         (!selectedMonth || getDateMonth(appointment.date) === selectedMonth) &&
-        (!search || normalizeSearch(appointment.user_name || '').includes(search))
+        (!search || normalizeSearch(appointment.user_name || '').includes(search)) &&
+        (!microchip || onlyDigits(appointment.microchip || '').includes(microchip))
       ));
     },
-    [appointments, selectedStatus, selectedDate, selectedMonth, tutorSearch]
+    [appointments, selectedStatus, selectedDate, selectedMonth, tutorSearch, microchipSearch]
   );
   const totalPages = Math.max(1, Math.ceil(filteredAppointments.length / CLINIC_APPOINTMENTS_PAGE_SIZE));
   const safePage = Math.min(page, totalPages);
@@ -1797,14 +1800,14 @@ function ClinicPanel({ auth }) {
 
   useEffect(() => {
     setPage(1);
-  }, [selectedClinicId, selectedStatus, selectedDate, selectedMonth, tutorSearch]);
+  }, [selectedClinicId, selectedStatus, selectedDate, selectedMonth, tutorSearch, microchipSearch]);
 
   return (
     <section className="admin-layout">
       <div className="section-title">
         <span className="eyebrow">{isAdmin ? 'Admin · Clínica' : 'Clínica'}</span>
         <h2>Agendamentos</h2>
-        <p>{isAdmin ? 'Escolha uma clínica, status, data, mês e tutor para visualizar os agendamentos, ou mantenha os filtros em branco.' : 'Filtre por status, data, mês ou tutor para localizar os agendamentos da clínica.'}</p>
+        <p>{isAdmin ? 'Escolha uma clínica, status, data, mês, tutor ou microchip para visualizar os agendamentos, ou mantenha os filtros em branco.' : 'Filtre por status, data, mês, tutor ou microchip para localizar os agendamentos da clínica.'}</p>
       </div>
       {error ? <InlineAlert message={error} /> : null}
       <div className="clinic-selector-bar">
@@ -1839,7 +1842,8 @@ function ClinicPanel({ auth }) {
           </select>
         </label>
         <TextField label="Tutor" value={tutorSearch} onChange={setTutorSearch} />
-        <button className="button ghost" type="button" onClick={() => { setSelectedClinicId(''); setSelectedStatus(''); setSelectedDate(''); setSelectedMonth(''); setTutorSearch(''); }}>
+        <TextField label="Microchip" value={microchipSearch} onChange={setMicrochipSearch} inputMode="numeric" maxLength={17} />
+        <button className="button ghost" type="button" onClick={() => { setSelectedClinicId(''); setSelectedStatus(''); setSelectedDate(''); setSelectedMonth(''); setTutorSearch(''); setMicrochipSearch(''); }}>
           Limpar filtros
         </button>
         <span className="filter-count">
@@ -3840,7 +3844,7 @@ function AppointmentsTab({ appointments, slots = [], clinics = [], reload, auth,
   const [rowErrors, setRowErrors] = useState({});
   const [rowMessages, setRowMessages] = useState({});
   const [rescheduling, setRescheduling] = useState(null);
-  const [filters, setFilters] = useState({ tutor: '', clinic_id: '', month: '', status: '' });
+  const [filters, setFilters] = useState({ tutor: '', microchip: '', clinic_id: '', month: '', status: '' });
   const [page, setPage] = useState(1);
   const isAdminManagement = auth.user.role === 'admin' && adminManagement;
 
@@ -3853,8 +3857,10 @@ function AppointmentsTab({ appointments, slots = [], clinics = [], reload, auth,
   const filteredAppointments = useMemo(() => {
     if (!isAdminManagement) return appointments;
     const tutor = normalizeSearch(filters.tutor);
+    const microchip = onlyDigits(filters.microchip);
     return appointments.filter((appointment) => (
       (!tutor || normalizeSearch(`${appointment.user_name || ''} ${appointment.user_cpf || ''}`).includes(tutor)) &&
+      (!microchip || onlyDigits(appointment.microchip || '').includes(microchip)) &&
       (!filters.clinic_id || String(appointment.clinic_id || '') === filters.clinic_id) &&
       (!filters.month || String(appointment.date || '').slice(0, 7) === filters.month) &&
       (!filters.status || appointment.status === filters.status)
@@ -3932,6 +3938,13 @@ function AppointmentsTab({ appointments, slots = [], clinics = [], reload, auth,
               value={filters.tutor}
               onChange={(value) => setFilters({ ...filters, tutor: value })}
             />
+            <TextField
+              label="Microchip"
+              value={filters.microchip}
+              onChange={(value) => setFilters({ ...filters, microchip: value })}
+              inputMode="numeric"
+              maxLength={17}
+            />
             <label className="field">
               <span>Clínica</span>
               <select value={filters.clinic_id} onChange={(event) => setFilters({ ...filters, clinic_id: event.target.value })}>
@@ -3959,7 +3972,7 @@ function AppointmentsTab({ appointments, slots = [], clinics = [], reload, auth,
                 ))}
               </select>
             </label>
-            <button className="button ghost filter-clear-button" type="button" onClick={() => setFilters({ tutor: '', clinic_id: '', month: '', status: '' })}>
+            <button className="button ghost filter-clear-button" type="button" onClick={() => setFilters({ tutor: '', microchip: '', clinic_id: '', month: '', status: '' })}>
               <XCircle size={17} /> Limpar filtros
             </button>
             <span className="filter-count">
