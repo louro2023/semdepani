@@ -1,0 +1,95 @@
+/* Public identity: navy for legibility, municipal cyan for accents. */
+.release-countdown { width: 100%; max-width: 430px; padding: 18px; border: 1px solid #cce8f4; border-radius: 14px; background: #f1f9fd; color: #272e63; }
+.release-countdown-title { display: flex; align-items: center; gap: 8px; font-size: .86rem; font-weight: 700; }
+.release-countdown-title svg { flex-shrink: 0; color: #087fa8; }
+.release-countdown-units { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 8px; margin-top: 14px; }
+.release-countdown-unit { display: grid; gap: 2px; text-align: center; padding: 9px 2px; background: #fff; border-radius: 8px; }
+.release-countdown-unit strong { font-size: clamp(1.3rem, 3vw, 1.8rem); font-variant-numeric: tabular-nums; line-height: 1.1; }
+.release-countdown-unit small { font-size: .65rem; color: #58677c; }
+.release-countdown p { margin: 12px 0 0; font-size: .73rem; line-height: 1.5; color: #58677c; }
+.countdown-control { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 16px; margin: 18px 0; padding: 18px; background: var(--surface); border: 1px solid var(--line); border-radius: 12px; }
+.countdown-control > div { flex: 1 1 280px; }
+.countdown-control p { margin: 6px 0; font-size: .86rem; line-height: 1.5; color: var(--muted); }
+.countdown-control small { color: var(--primary); }
+.countdown-control .countdown-control-error { flex-basis: 100%; color: var(--danger); }
+/* Frame the original supplied artwork, hiding only its outer white margins. */
+.official-logo { display: block; position: relative; overflow: hidden; flex-shrink: 0; background: #fff; }
+.official-logo img { display: block; position: absolute; max-width: none; height: auto; }
+.official-logo-city { width: 210px; aspect-ratio: 675 / 245; }
+.official-logo-city img { width: calc(100% * 797 / 675); left: calc(-100% * 60 / 675); top: calc(-100% * 195 / 245); }
+.footer-identity { display: flex; justify-content: center; align-items: center; flex-wrap: wrap; gap: 20px 40px; margin: 0 auto 20px; }
+.department-brand { width: min(170px, 100%); color: #272e63; text-align: center; }
+/* Reuse the same original crest and municipal lettering for both departments. */
+.department-brand-municipal { width: 100%; aspect-ratio: 405 / 232; }
+.department-brand-municipal img { width: calc(100% * 794 / 405); left: calc(-100% * 195 / 405); top: calc(-100% * 148 / 232); }
+.department-brand-name { display: block; margin: 2px 5px 0; padding-top: 6px; border-top: 1px solid #272e63; font-family: 'DM Sans', sans-serif; font-size: 10.5px; font-weight: 800; line-height: 1.3; text-transform: uppercase; }
+.public-theme { --bg: #f5f8fc; --surface-strong: #edf5fa; --ink: #272e63; --muted: #58677c; --line: #dce5ee; --border: #dce5ee; --primary: #272e63; --primary-dark: #1d234e; --accent: #087fa8; --wiz-cream: #f1f7fb; --shadow: 0 12px 36px rgba(39,46,99,.06); background-color: var(--bg); }
+.public-theme :is(h1,h2,h3,.wiz-title,.wiz-result h3,.wiz-confirm h3) { font-family: 'DM Sans', sans-serif; letter-spacing: -.035em; }
+.public-theme .topbar { background: rgba(255,255,255,.97); padding-block: 20px; border-top: 4px solid #19afe0; gap: 24px; }
+.public-theme .top-actions { gap: 4px; justify-content: flex-end; }
+.public-theme .nav-button { font-size: .8rem; padding: 10px; }
+.public-theme .nav-button:hover { background: #eaf7fc; }
+.public-theme .primary-nav:hover { background: var(--primary-dark); color: white; }
+.public-theme main { width: min(1240px, calc(100% - 64px)); padding-top: 40px; }
+.public-theme .home-layout { gap: 28px; }
+.public-theme .ed-hero { grid-template-columns: 1.12fr 1fr; border: 1px solid var(--line); border-radius: 24px; box-shadow: var(--shadow); }
+.public-theme .ed-hero-content { padding: clamp(28px,4vw,56px); background: #fff; border: 0; border-radius: 0; }
+.public-theme .ed-hero-content::before { display: none; }
+.public-theme .ed-eyebrow { margin-bottom: 22px; }
+.public-theme .ed-eyebrow span { font-size: .7rem; letter-spacing: .12em; }
+.public-theme .ed-rule { background: #19afe0; width: 44px; height: 3px; }
+.public-theme .ed-heading { font-size: clamp(2.6rem,4.5vw,4.1rem); font-weight: 800; line-height: 1.06; max-width: 540px; margin-bottom: 22px; }
+.public-theme .ed-heading em { color: #087fa8; text-decoration: none; }
+.public-theme .ed-sub { max-width: 470px; font-size: .98rem; }
+.public-theme .ed-eligibility { background: #eff9fd; border: 1px solid #d1edf7; font-weight: 500; font-size: .85rem; margin-bottom: 24px; border-radius: 12px; }
+.public-theme .ed-main-actions { gap: 10px; }
+.public-theme .ed-actions .button.primary { background: var(--primary); border-color: var(--primary); box-shadow: 0 5px 14px #272e631a; }
+.public-theme .ed-actions .button.primary:hover { background: var(--primary-dark); border-color: var(--primary-dark); box-shadow: 0 8px 20px #272e6326; }
+.public-theme .button.secondary { background: #eef7fc; border-color: #d1e6f0; color: var(--primary); }
+.public-theme .ed-main-actions .button { padding-inline: 18px; font-size: .85rem; }
+.public-theme .ed-protector-cta { background: transparent; color: var(--primary); border-color: var(--line); font-size: .82rem; min-height: 44px; }
+.public-theme .ed-protector-cta:hover { background: #eff9fd; border-color: #19afe0; }
+.public-theme .ed-secondary-actions { flex-wrap: wrap; row-gap: 4px; }
+.public-theme .ed-avail { display: flex; flex-direction: column; justify-content: flex-end; background: #dff3fc; border-radius: 0; clip-path: none; min-width: 0; }
+.public-theme .ed-avail::before { display: none; }
+.public-theme .ed-avail-pets { position: relative; inset: auto; width: 100%; height: 530px; flex: 1; min-height: 0; object-fit: contain; object-position: center; }
+.ed-image-caption { display: flex; align-items: center; justify-content: center; gap: 10px; background: #e3f5fc; color: #272e63; padding: 15px; font-size: .8rem; font-weight: 500; }
+.ed-image-caption svg { color: #087fa8; flex-shrink: 0; }
+.public-theme .ed-steps { padding: 36px 40px; border-color: var(--line); box-shadow: none; }
+.public-theme .ed-steps-label { color: var(--ink); font-size: 1.5rem; text-transform: none; letter-spacing: -.035em; }
+.public-theme .ed-step-icon { background: #eef9fd; color: #087fa8; border-color: #d4edf7; }
+.public-theme .ed-step-num { font-family: 'DM Sans', sans-serif; font-size: 3rem; color: #d7e8f0; }
+.public-theme .ed-step-rule { background: #19afe0; }
+.public-theme .ed-step strong { font-size: 1rem; }
+.public-theme .app-footer { padding: 22px 24px; line-height: 1.7; }
+.public-theme :is(.form-surface,.auth-panel,.result-panel) { border-radius: 20px; }
+.public-theme :is(.eyebrow,.wiz-doc-notice,.doc-required-notice) { background: #edf8fd; border-color: #cce8f4; }
+.public-theme :is(.wiz-picker-opt,.wiz-clinic-opt,.wiz-date-opt).active { background: #edf8fd; border-color: #087fa8; }
+.public-theme :is(.wiz-picker-opt,.wiz-clinic-opt,.wiz-date-opt):hover:not(:disabled) { background: #f1f9fd; }
+.public-theme :is(.wiz-confirm-icon,.wiz-result) { background: #eff8fc; }
+.public-theme :is(button,a,input,select,summary):focus-visible { outline: 3px solid #087fa8; outline-offset: 4px; }
+@media (max-width: 1100px) {
+  .public-theme .topbar { flex-wrap: wrap; justify-content: center; }
+  .public-theme .top-actions { justify-content: center; }
+  .public-theme .ed-hero { grid-template-columns: 1.1fr 1fr; }
+}
+@media (max-width: 860px) {
+  .public-theme .topbar { position: relative; }
+  .public-theme main { width: calc(100% - 32px); padding-top: 24px; }
+  .public-theme .ed-hero { grid-template-columns: 1fr; }
+  .public-theme .ed-heading { max-width: 550px; }
+  .public-theme .ed-avail-pets { height: auto; max-height: 600px; object-fit: contain; background: #dcf2fc; flex: none; }
+  .public-theme .ed-steps { padding: 28px; }
+}
+@media (max-width: 480px) {
+  .public-theme .topbar { padding: 16px; gap: 18px; }
+  .public-theme .nav-button { font-size: .73rem; min-height: 42px; padding: 8px; }
+  .public-theme .ed-hero-content { padding: 28px 22px; }
+  .public-theme .ed-heading { font-size: 2.6rem; }
+  .public-theme .ed-main-actions, .public-theme .ed-main-actions .button, .public-theme .ed-protector-cta { width: 100%; }
+  .public-theme .ed-steps { padding: 24px; }
+  .footer-identity { gap: 20px; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .public-theme *, .public-theme *::before, .public-theme *::after { animation: none !important; transition: none !important; scroll-behavior: auto !important; }
+}

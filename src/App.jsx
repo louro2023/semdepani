@@ -28,8 +28,14 @@ import {
   Users,
   XCircle
 } from 'lucide-react';
+import petsHero from './assets/pets-hero.webp';
+import prefeituraLogo from './assets/logo-prefeitura.png';
+import defesaLogo from './assets/logo-defesa-animais.png';
+import { ReleaseCountdown, CountdownControl } from './ReleaseCountdown.jsx';
+import { validateBirthDate } from '../shared/birth-date.js';
 
 const emptyUser = {
+  birthDate: '',
   name: '',
   cpf: '',
   cep: '',
@@ -156,14 +162,10 @@ export default function App() {
   const title = view === 'admin' ? 'Área Administrativa' : view === 'protetor' ? 'Área do Protetor Cadastrado' : 'Castração Animal';
 
   return (
-    <div className="app-shell">
+    <div className={`app-shell${view !== 'admin' && view !== 'clinica' && view !== 'forgot-password-admin' ? ' public-theme' : ''}`}>
       <header className="topbar">
         <button className="brand-button" type="button" onClick={() => setView('home')} title="Início">
-          <span className="brand-mark"><img src="/brasao.png" alt="Brasão Nova Iguaçu" className="brand-brasao" /></span>
-          <span>
-            <strong>Castração Animal</strong>
-            <small>Nova Iguaçu</small>
-          </span>
+          <MunicipalBrand />
         </button>
         <nav className="top-actions" aria-label="Navegação principal">
           <IconButton icon={Home} label="Início" onClick={() => setView('home')} />
@@ -240,10 +242,33 @@ export default function App() {
         ) : null}
       </main>
       <footer className="app-footer">
+        <div className="footer-identity">
+          <DepartmentBrand name="Defesa e Proteção dos Animais">Defesa e Proteção<br />dos Animais</DepartmentBrand>
+          <DepartmentBrand name="Subsecretaria de Tecnologia da Informação">Subsecretaria de<br />Tecnologia da Informação</DepartmentBrand>
+        </div>
         <p>© 2026 Secretaria Municipal de Defesa e Proteção dos Animais. Horário de Funcionamento: De 09h às 17h. Todos os direitos reservados.</p>
         <p style={{fontSize:'12px',marginTop:'6px',opacity:0.7}}>Desenvolvido pela Subsecretaria de Tecnologia da Informação de Nova Iguaçu – SEMUG.</p>
       </footer>
     </div>
+  );
+}
+
+function DepartmentBrand({ name, children }) {
+  return (
+    <div className="department-brand" role="img" aria-label={`Prefeitura de Nova Iguaçu — ${name}`}>
+      <span className="official-logo department-brand-municipal" aria-hidden="true">
+        <img src={defesaLogo} alt="" width="794" height="592" />
+      </span>
+      <span className="department-brand-name" aria-hidden="true">{children}</span>
+    </div>
+  );
+}
+
+function MunicipalBrand() {
+  return (
+    <span className="official-logo official-logo-city">
+      <img src={prefeituraLogo} alt="Prefeitura de Nova Iguaçu" width="797" height="602" />
+    </span>
   );
 }
 
@@ -258,10 +283,7 @@ function HomeView({ auth, setView }) {
             <div className="ed-rule" />
           </div>
           <h1 className="ed-heading">
-            Castração<br />
-            <em>gratuita</em><br />
-            para o seu<br />
-            animal.
+            Castração <em>gratuita</em> para o seu animal.
           </h1>
           <p className="ed-sub">
             Primeiro crie seu cadastro de tutor. Depois, na área logada, solicite o agendamento da castração do seu animal.
@@ -300,12 +322,13 @@ function HomeView({ auth, setView }) {
                 <Building2 size={15} /> Administrativo
               </button>
             </div>
+            <ReleaseCountdown request={request} />
           </div>
         </div>
 
         <div className="ed-avail">
-          <img src="/pets.png" alt="Animais para castração" className="ed-avail-pets" />
-          <img src="/semdepa.png" alt="Semdepa" className="ed-avail-semdepa" />
+          <img src={petsHero} alt="Cachorro caramelo e branco ao lado de um gato tigrado" className="ed-avail-pets" width="1122" height="1402" fetchPriority="high" />
+          <div className="ed-image-caption"><Shield size={20} aria-hidden="true" /><span>Cuidar deles é cuidar da nossa cidade.</span></div>
         </div>
       </section>
 
@@ -549,6 +572,8 @@ function Wizard({ auth, onDone }) {
 
   function validateStep(targetStep = step) {
     if (targetStep === 1 && isRegistrationFlow) {
+      const birthError = validateBirthDate(user.birthDate).error;
+      if (birthError) return birthError;
       if (!user.name || !user.cep || !user.address || (!user.addressNumber && !user.addressNumberMissing) || !user.neighborhood || !user.phone || !user.email) return 'Preencha todos os campos obrigatórios da etapa do tutor.';
       if (cpfError) return cpfError;
       if (cepDigits.length !== 8) return 'Informe um CEP válido com 8 dígitos.';
@@ -679,6 +704,7 @@ function Wizard({ auth, onDone }) {
                         <span>Este cadastro é para o cidadão/tutor. Depois de concluir, você entrará automaticamente na área do tutor para solicitar a castração do animal.</span>
                       </div>
                       <TextField label="Nome completo" value={user.name} onChange={(value) => updateUser('name', value)} required />
+                      <DateField label="Data de nascimento" value={user.birthDate} onChange={(value) => updateUser('birthDate', value)} hint="DD/MM/AAAA — é necessário ter 18 anos completos." error={showStepOneFieldErrors || user.birthDate?.length === 10 ? validateBirthDate(user.birthDate).error : ''} required />
                       <TextField
                         label="CPF"
                         value={user.cpf}
@@ -3634,6 +3660,7 @@ function SlotsTab({ slots, clinics, reload, auth }) {
             <span className="month-release-status hidden">Oculto</span>
           </div>
         </div>
+        <CountdownControl request={request} token={auth.token} />
         {publicationMonthReleases.length ? (
           <div className="month-release-grid">
             {publicationMonthReleases.map((release) => {

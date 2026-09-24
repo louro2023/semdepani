@@ -56,6 +56,10 @@ button:disabled {
 
 .app-shell {
   min-height: 100vh;
+  background-color: var(--bg);
+  background-image: url('./assets/paw-relief.svg');
+  background-repeat: repeat;
+  background-size: 240px 240px;
 }
 
 .app-footer {

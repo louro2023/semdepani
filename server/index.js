@@ -11,6 +11,8 @@ import jwt from 'jsonwebtoken';
 import multer from 'multer';
 import nodemailer from 'nodemailer';
 import rateLimit from 'express-rate-limit';
+import { validateBirthDate } from '../shared/birth-date.js';
+import { countdownEnabled, setCountdownEnabled, publicReleaseCountdown } from './release-countdown.js';
 import {
   createProtocol,
   db,
@@ -183,6 +185,11 @@ app.get('/api/clinics/:clinicId/available-dates', optionalAuth, (req, res) => {
   }
 });
 
+app.get('/api/public/release-countdown', (_req, res) => {
+  res.set('Cache-Control', 'no-store');
+  res.json(publicReleaseCountdown(db));
+});
+
 app.get('/api/availability', optionalAuth, (req, res) => {
   const dateGuard = slotAvailabilityDateGuard(req.user);
   const rows = db.prepare(`
@@ -329,6 +336,7 @@ app.post('/api/auth/register', async (req, res) => {
   try {
     const { user, role = 'tutor', terms } = req.body;
     validateTerms(terms);
+    parseUser(user, role);
     await lookupNovaIguacuCep(user?.cep || user?.zipCode);
     const saved = registerOrActivateUser(user, role, { allowExistingPassword: false });
     res.status(201).json({ token: signToken(saved), user: publicUser(saved) });
@@ -341,6 +349,7 @@ app.post('/api/public/inscricao', async (req, res) => {
   try {
     const { user, animal, terms, role = 'tutor', clinicId = null, date = '' } = req.body;
     validateTerms(terms);
+    parseUser(user, role);
     await lookupNovaIguacuCep(user?.cep || user?.zipCode);
     const savedUser = registerOrActivateUser(user, role, { allowExistingPassword: true });
     const appointment = await createAutomaticAppointment(savedUser, animal, terms, {
@@ -807,6 +816,20 @@ app.post('/api/admin/slots/release-now', requireAdmin, (req, res) => {
   const enabled = req.body.enabled === true || req.body.enabled === 1 || req.body.enabled === '1' || req.body.enabled === 'true';
   setPublicSlotsReleaseNowEnabled(enabled);
   res.json({ enabled });
+});
+
+app.get('/api/admin/slots/countdown', requireAdmin, (_req, res) => {
+  res.set('Cache-Control', 'no-store');
+  res.json({ enabled: countdownEnabled(db) });
+});
+
+app.put('/api/admin/slots/countdown', requireAdmin, (req, res) => {
+  try {
+    setCountdownEnabled(db, req.body.enabled);
+    res.json({ enabled: countdownEnabled(db) });
+  } catch (error) {
+    sendError(res, error);
+  }
 });
 
 app.get('/api/admin/slots/releases', requireAdmin, (_req, res) => {
@@ -1443,23 +1466,26 @@ function registerOrActivateUser(input = {}, role, options = {}) {
   if (existing) {
     db.prepare(`
       UPDATE users
-      SET name = ?, phone = ?, cep = ?, address = ?, address_number = ?, neighborhood = ?, email = ?, password_hash = ?, city_confirmed = 1, adult_confirmed = 1,
+      SET name = ?, phone = ?, cep = ?, address = ?, address_number = ?, neighborhood = ?, email = ?, password_hash = ?, birth_date = ?, city_confirmed = 1, adult_confirmed = 1,
         active = 1, updated_at = CURRENT_TIMESTAMP
       WHERE id = ?
-    `).run(data.name, data.phone, data.cep, data.address, data.address_number, data.neighborhood, data.email || existing.email || '', hash, existing.id);
+    `).run(data.name, data.phone, data.cep, data.address, data.address_number, data.neighborhood, data.email || existing.email || '', hash, data.birth_date, existing.id);
     return getUserById(existing.id);
   }
 
   const result = db.prepare(`
-    INSERT INTO users (name, cpf, password_hash, phone, cep, address, address_number, neighborhood, email, role, city_confirmed, adult_confirmed, active)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, 1, 1)
-  `).run(data.name, data.cpf, hash, data.phone, data.cep, data.address, data.address_number, data.neighborhood, data.email || '', selectedRole);
+    INSERT INTO users (name, cpf, password_hash, phone, cep, address, address_number, neighborhood, email, role, birth_date, city_confirmed, adult_confirmed, active)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, 1, 1)
+  `).run(data.name, data.cpf, hash, data.phone, data.cep, data.address, data.address_number, data.neighborhood, data.email || '', selectedRole, data.birth_date);
   return getUserById(result.lastInsertRowid);
 }
 
 function parseUser(input = {}, role) {
+  const birth = validateBirthDate(input.birthDate);
+  if (birth.error) throw httpError(400, birth.error);
   const addressNumberMissing = input.addressNumberMissing === true || input.address_number_missing === true || input.noAddressNumber === true;
   const data = {
+    birth_date: birth.birthDate,
     name: normalizeText(input.name),
     cpf: normalizeCpf(input.cpf),
     phone: normalizePhone(input.phone),

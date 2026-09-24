@@ -237,6 +237,7 @@ export function initSchema() {
   ensureColumn('users', 'doc_cpf', 'TEXT');
   ensureColumn('users', 'doc_identidade', 'TEXT');
   ensureColumn('users', 'email', 'TEXT');
+  ensureColumn('users', 'birth_date', 'TEXT');
   ensureColumn('appointments', 'microchip', 'TEXT');
   ensureColumn('appointments', 'substitute_responsible', 'INTEGER NOT NULL DEFAULT 0');
   ensureColumn('appointments', 'responsible_name', 'TEXT');
